@@ -20,6 +20,7 @@ factory_data.db-*
 .ai_cleaner_quarantine/
 temp_fieldtest_project/
 corepilot_fieldtest.txt
+corepilot_diagnostics.txt
 *.log
 *.processing
 

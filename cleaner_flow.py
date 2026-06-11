@@ -4,13 +4,13 @@ import asyncio
 import json
 import logging
 import os
-import re
 
 import chainlit as cl
 from crewai import Crew, Task
 
 from agents import safe_kickoff
 from cleaner_agents import make_cleaner_analyzer
+from pipeline_parser import _extract_json as _parse_json_from_agent
 from utils import SessionState, RuntimeContext, DummyInteractionHandler, set_runtime_context, reset_runtime_context
 import cleaner_tools as ct
 
@@ -21,16 +21,6 @@ def _get_safe_state() -> SessionState:
     from utils import SessionState
     kwargs = {k: cl.user_session.get(k) for k in SessionState.model_fields if cl.user_session.get(k) is not None}
     return SessionState.model_validate(kwargs)
-
-def _parse_json_from_agent(raw: str) -> dict | list | None:
-    raw = raw.strip()
-    try: return json.loads(raw)
-    except json.JSONDecodeError: pass
-    for pattern in [r"```json\s*([\s\S]+?)\s*```", r"```\s*([\s\S]+?)\s*```", r"(\{[\s\S]+\})", r"(\[[\s\S]+\])"]:
-        if m := re.search(pattern, raw):
-            try: return json.loads(m.group(1))
-            except json.JSONDecodeError: continue
-    return None
 
 def _fmt_mb(mb: float) -> str: return f"{mb/1024:.1f} ГБ" if mb >= 1024 else f"{mb:.1f} МБ"
 

@@ -314,3 +314,31 @@ Sdkmanager: `%LocalAppData%\Android\Sdk\cmdline-tools\latest\bin\sdkmanager.bat`
   * Документация в `USAGE.md` адаптирована под философию CorePilot — сделан упор на то, что это не просто инструмент для программистов, а автономный ИИ-оркестратор для автоматизации широкого спектра повседневных задач.
   * Описание режимов «Конвейер» и «Менеджер» расширено примерами нетехнических задач: заполнение отчетов по шаблонам, парсинг CSV-таблиц, форматирование текстовых файлов и исправление ошибок.
   * Релизный архив `C:\CorePilot_GitHub_Release.zip` автоматически пересобран и теперь содержит полностью актуальную версию документации.
+
+## GitHub-гигиена, JSON-парсер и мобильные права (11.06.2026 — сессия Plan/)
+
+- **GitHub (GITHUB_TASKS.md — выполнено полностью):**
+  * `.gitattributes` создан: py=LF, bat/md/toml/md=CRLF, gguf/apk — binary.
+  * `.gitignore` дополнен: `*.gguf` и `models/` (тяжёлые модели вне репо).
+  * `CONTRIBUTING.md`, `.github/pull_request_template.md`, `SECURITY.md` — созданы.
+  * `README.md`: добавлены бейджи MIT/Python 3.12/Windows/alpha.
+  * История git проверена на утечки ключей: `git log --all -p | grep -iE "sk-or-|gsk_"` — чисто.
+  * Лейблы GitHub: priority:high (#6 демон, VRAM leak), good first issue+help wanted (#1), good first issue (#3).
+
+- **Android 11+ права на хранилище (ROADMAP_DEV.md Приоритет 1):**
+  * `android_bridge.list_models()` молча возвращал `[]` при OSError. ИСПРАВЛЕНО: возвращает `[{"error": True, "reason": "..."}]` с понятным текстом.
+  * Добавлены `check_manage_external_storage()` и `request_manage_external_storage()` через JNI (`Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION`).
+  * `mobile/main.py` Edge AI вкладка: при ошибке доступа показывает блок с текстом и кнопкой «Выдать доступ».
+
+- **JSON-парсер (ROADMAP_DEV.md Приоритет 2):**
+  * `pipeline_parser._extract_json` переписан: перебирает ВСЕ JSON-кандидаты от последнего к первому (финальный блок чище), поддерживает markdown-обёртки, `<think>` теги через `extract_agent_reasoning`.
+  * `agents.py`: добавлена `json_few_shot_suffix()` — компактные few-shot примеры JSON в backstory для локальных моделей (gatherer/architect/coder).
+  * `pipeline_agents.py`: backstory каждой JSON-роли заканчивается «Только JSON, без пояснений».
+  * `cleaner_flow.py`: был `import json` УДАЛЁН по ошибке (при рефакторинге). РЕЗУЛЬТАТ: `json.loads`/`json.dumps` падали бы с `NameError` при запуске Cleaner. ИСПРАВЛЕНО: `import json` возвращён.
+
+- **Разное:**
+  * `app.py AUTO_DIR`: был хардкод `'./auto_tasks'` (cwd-зависимый). Исправлено на `__file__`-относительный путь с env-override `COREPILOT_AUTO_DIR`.
+  * Zombie `.processing` файлы в `auto_tasks/` зачищены вручную (2 пары из прерванных тестов демона). Демон сам восстанавливает их через `_reclaim_stale_processing_files` при старте.
+  * `auto_qa.py` chaos-test: VERD: PASS (14/20 под экстремальным хаосом — норма; RSS 36МБ стабилен, потоки 1→1 чистые).
+
+- **Урок:** при удалении «дублирующего» импорта проверяй, что он не используется напрямую в этом же файле. Быстрая проверка: `python -c "import module; print(hasattr(module, 'json'))"` ловит такой баг без запуска.
