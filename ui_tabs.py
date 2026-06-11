@@ -1080,7 +1080,6 @@ class LlamaTab:
                 dpg.add_slider_int(tag="llama_ngl", default_value=-1, min_value=-1,
                                    max_value=999, width=250)
             dpg.add_separator()
-            dpg.add_separator()
             with dpg.group(horizontal=True):
                 dpg.add_checkbox(label="Доступ с телефона (LAN)", tag="llama_lan",
                                  default_value=False)
