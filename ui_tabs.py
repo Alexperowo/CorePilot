@@ -1302,25 +1302,25 @@ class HealthTab:
             dpg.add_text("Состояние фабрики", color=(120, 200, 255))
             dpg.add_separator()
             with dpg.group(horizontal=True):
-                with dpg.child_window(width=270, height=170, border=True):
+                with dpg.child_window(width=270, height=320, border=True):
                     dpg.add_text("ДЕМОН", color=(170, 170, 175))
                     dpg.add_text("—", tag="health_daemon", color=(240, 240, 245), wrap=250)
                     dpg.add_spacer(height=6)
                     dpg.add_text("LLAMA-СЕРВЕР", color=(170, 170, 175))
                     dpg.add_text("—", tag="health_llama", color=(240, 240, 245), wrap=250)
-                with dpg.child_window(width=270, height=170, border=True):
+                with dpg.child_window(width=270, height=320, border=True):
                     dpg.add_text("ЗАДАЧИ", color=(170, 170, 175))
                     for st in (svc.STATUS_PENDING, svc.STATUS_PROCESSING, svc.STATUS_FROZEN,
                                svc.STATUS_DONE, svc.STATUS_FAILED):
                         dpg.add_text("—", tag=f"health_cnt_{st}", color=STATUS_COLORS[st])
-                with dpg.child_window(width=270, height=170, border=True):
+                with dpg.child_window(width=270, height=320, border=True):
                     dpg.add_text("ПОСЛЕДНИЙ QA-ТЕСТ", color=(170, 170, 175))
                     dpg.add_text("—", tag="health_qa", color=(240, 240, 245), wrap=250)
                     dpg.add_spacer(height=6)
                     dpg.add_text("КВОТЫ", color=(170, 170, 175))
                     dpg.add_text("нажмите «Обновить квоты»", tag="health_quota",
                                  color=(180, 180, 185), wrap=250)
-                with dpg.child_window(width=270, height=170, border=True):
+                with dpg.child_window(width=270, height=320, border=True):
                     dpg.add_text("ПОДДЕРЖКА ПРОЕКТА", color=(170, 170, 175))
                     import os
                     has_qr = False

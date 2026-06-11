@@ -401,7 +401,8 @@ def clear_finished() -> int:
 def get_quotas() -> list[dict]:
     """Живые квоты всех провайдеров с ключами. Без хардкода — данные из API/заголовков."""
     try:
-        from agents import fetch_all_quotas
+        from agents import fetch_all_quotas, _lazy_reload_keys
+        _lazy_reload_keys()  # гарантируем загрузку ключей до итерации API_KEYS
         return fetch_all_quotas()
     except Exception as e:
         return [{"provider": "?", "status": "error", "detail": str(e)[:200]}]
