@@ -32,6 +32,10 @@ user_data/
 llama/
 mobile/engine/
 
+# Модели (тяжёлые бинарники, не должны попадать в репо)
+*.gguf
+models/
+
 # Python кэш и окружение
 __pycache__/
 *.py[cod]

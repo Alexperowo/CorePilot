@@ -1,0 +1,25 @@
+# CorePilot .gitattributes — нормализация переводов строк для Windows-проекта
+* text=auto
+
+# Python: LF
+*.py text eol=lf
+
+# Батники и PowerShell: CRLF (Windows)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Конфиги и документация: CRLF на Windows
+*.toml text eol=crlf
+*.md   text eol=crlf
+*.txt  text eol=crlf
+*.json text eol=lf
+
+# Бинарники — без нормализации
+*.gguf binary
+*.apk  binary
+*.exe  binary
+*.so   binary
+*.dll  binary
+*.jpg  binary
+*.png  binary

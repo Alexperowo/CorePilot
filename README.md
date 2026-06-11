@@ -1,5 +1,10 @@
 # CorePilot (AI Factory) 🏭
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.12-blue)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/platform-Windows-lightgrey)](INSTALL.md)
+[![Status](https://img.shields.io/badge/status-alpha-orange)](ROADMAP.md)
+
 **CorePilot** — это локальная фабрика ИИ-агентов для работы с кодом, документами и операционной системой. Несколько специализированных ИИ-агентов взаимодействуют как автономная команда для решения ваших задач непосредственно на вашем компьютере с использованием локальных или облачных моделей.
 
 > Работает на обычном железе. Проверено на Ryzen 5 3600 / 16 ГБ RAM / Radeon RX 6600 8 ГБ — без дискретной видеокарты тоже запустится (медленнее).
