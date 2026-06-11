@@ -158,7 +158,11 @@ class CorePilotMobile:
     # Вкладка 1 — Edge AI Node (llama-сервер)
     # ===================================================================
     def _show_edge_ai(self):
-        models = ab.list_models()
+        raw_models = ab.list_models()
+        # Разделяем нормальные модели и ошибки доступа
+        error_entry = next((m for m in raw_models if m.get("error")), None)
+        models = [m for m in raw_models if not m.get("error")]
+
         model_opts = [ft.dropdown.Option(m["name"], f"{m['name']}  ({m['size_gb']} ГБ)")
                       for m in models]
         self._models = {m["name"]: m["path"] for m in models}
@@ -197,19 +201,37 @@ class CorePilotMobile:
             on_click=self._stop_server, expand=True, height=52,
         )
 
+        # Блок ошибки доступа к хранилищу — показывается вместо «нет моделей»
+        # когда список вернул error=True (нет прав на Android 11+).
+        def _grant_storage(e):
+            ab.request_manage_external_storage()
+            self._toast("Выдайте разрешение в открывшемся окне, затем перезайдите на вкладку.", WARN)
+
+        storage_error_block = ft.Container(
+            content=ft.Column([
+                ft.Text(error_entry["reason"] if error_entry else "", color=WARN, size=13),
+                ft.Button(
+                    "Выдать доступ к папке моделей",
+                    bgcolor=WARN, color="#1A1000",
+                    on_click=_grant_storage, height=44,
+                ),
+            ], spacing=8),
+            visible=bool(error_entry), padding=ft.Padding(top=4),
+        )
+
         no_models = ft.Container(
             content=ft.Text(
                 f"Моделей не найдено в {ab.MODELS_DIR}\n"
                 f"Скопируйте .gguf с ПК командой update_mobile.bat.",
                 color=WARN, size=13),
-            visible=not models, padding=ft.Padding(top=4),
+            visible=(not models and not error_entry), padding=ft.Padding(top=4),
         )
 
         self.body.content = ft.Column([
             self._header("Edge AI Node", "Локальный запуск моделей на телефоне"),
             ft.Container(height=8),
             self._card(
-                self.dd_model, no_models,
+                self.dd_model, storage_error_block, no_models,
                 ft.Row([self.tf_ctx, self.tf_port], spacing=12),
                 self.tf_ngl,
                 ft.Row([btn_start, btn_stop], spacing=12),

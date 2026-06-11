@@ -59,17 +59,43 @@ class AuditResult(BaseModel):
     raw_text: str
     reasons: list[str] = Field(default_factory=list)
 
+def _try_loads(s: str) -> dict | list | None:
+    try:
+        return json.loads(s.strip())
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
 def _extract_json(raw: str) -> dict | list | None:
     if not raw or not raw.strip(): return None
     from utils import extract_agent_reasoning
     raw, _ = extract_agent_reasoning(raw)
     if not raw: return None
-    try: return json.loads(raw)
-    except json.JSONDecodeError: pass
-    for pat in [r"```json\s*([\s\S]+?)\s*```", r"```\s*([\s\S]+?)\s*```", r"(\{[\s\S]+\})", r"(\[[\s\S]+\])"]:
-        if m := re.search(pat, raw):
-            try: return json.loads(m.group(1))
-            except json.JSONDecodeError: continue
+
+    # 1. Чистый JSON — парсим сразу
+    if r := _try_loads(raw): return r
+
+    # 2. Markdown-блоки ```json ... ``` и ``` ... ``` (нежадные — берут первый блок)
+    for pat in [r"```json\s*([\s\S]+?)\s*```", r"```\s*([\s\S]+?)\s*```"]:
+        for m in re.finditer(pat, raw):
+            if r := _try_loads(m.group(1)): return r
+
+    # 3. Все {...} кандидаты — ищем все вхождения и пробуем от последнего к первому
+    #    (финальный блок обычно чище: модели сначала «думают», потом выдают результат)
+    obj_candidates = [m.group(0) for m in re.finditer(r"\{[\s\S]+?\}", raw)]
+    for candidate in reversed(obj_candidates):
+        if r := _try_loads(candidate): return r
+    # Жадный вариант: от первого { до последнего } (на случай вложенных объектов)
+    if m := re.search(r"(\{[\s\S]+\})", raw):
+        if r := _try_loads(m.group(1)): return r
+
+    # 4. Массивы [...] — аналогично
+    arr_candidates = [m.group(0) for m in re.finditer(r"\[[\s\S]+?\]", raw)]
+    for candidate in reversed(arr_candidates):
+        if r := _try_loads(candidate): return r
+    if m := re.search(r"(\[[\s\S]+\])", raw):
+        if r := _try_loads(m.group(1)): return r
+
     return None
 
 def parse_gatherer_output(raw: str) -> GathererManifest:

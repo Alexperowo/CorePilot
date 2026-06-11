@@ -266,20 +266,68 @@ def jni_popen(cmd: list[str], env: dict | None = None,
 # ===========================================================================
 
 def list_models() -> list[dict]:
-    """Список .gguf моделей в публичной папке (имя + размер ГБ)."""
+    """Список .gguf моделей в публичной папке (имя + размер ГБ).
+    При ошибке доступа возвращает список с одним элементом-ошибкой:
+    {"error": True, "reason": "..."}  — UI покажет понятное сообщение."""
     out = []
     try:
-        for f in sorted(os.listdir(MODELS_DIR)):
-            if f.lower().endswith(".gguf"):
-                p = os.path.join(MODELS_DIR, f)
-                try:
-                    gb = round(os.path.getsize(p) / (1024 ** 3), 2)
-                except OSError:
-                    gb = 0.0
-                out.append({"name": f, "path": p, "size_gb": gb})
-    except OSError:
-        pass
+        entries = sorted(os.listdir(MODELS_DIR))
+    except OSError as e:
+        reason = str(e)
+        if "Permission" in reason or "13" in reason:
+            print(f"[models] нет прав на папку моделей: {reason}")
+            return [{"error": True, "reason": "Нет доступа к папке моделей — выдайте разрешение (кнопка ниже)."}]
+        elif "No such file" in reason or "2]" in reason:
+            print(f"[models] папка моделей не существует: {MODELS_DIR}")
+            return [{"error": True, "reason": f"Папка не найдена: {MODELS_DIR}\nСкопируйте .gguf с ПК через update_mobile.bat."}]
+        else:
+            print(f"[models] ошибка доступа к папке моделей: {reason}")
+            return [{"error": True, "reason": f"Ошибка доступа к папке моделей: {reason}"}]
+    for f in entries:
+        if f.lower().endswith(".gguf"):
+            p = os.path.join(MODELS_DIR, f)
+            try:
+                gb = round(os.path.getsize(p) / (1024 ** 3), 2)
+            except OSError:
+                gb = 0.0
+            out.append({"name": f, "path": p, "size_gb": gb})
     return out
+
+
+def check_manage_external_storage() -> bool:
+    """Проверяет, выдано ли разрешение MANAGE_EXTERNAL_STORAGE (Android 11+).
+    На ПК всегда возвращает True."""
+    if not ANDROID or not _ensure_jnius():
+        return True
+    try:
+        Environment = autoclass("android.os.Environment")
+        return bool(Environment.isExternalStorageManager())
+    except Exception:
+        return False
+
+
+def request_manage_external_storage() -> None:
+    """Открывает системный экран выдачи разрешения MANAGE_EXTERNAL_STORAGE.
+    Вызывать только после старта UI, не при инициализации.
+    На ПК — нет-оп."""
+    if not ANDROID or not _ensure_jnius():
+        return
+    try:
+        ActivityThread = autoclass("android.app.ActivityThread")
+        app = ActivityThread.currentApplication()
+        if app is None:
+            return
+        Settings = autoclass("android.provider.Settings")
+        Intent = autoclass("android.content.Intent")
+        Uri = autoclass("android.net.Uri")
+        intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+        intent.setData(Uri.parse(f"package:{app.getPackageName()}"))
+        # Flet использует Activity через ActivityThread; startActivity через контекст.
+        ctx = app.getApplicationContext()
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        ctx.startActivity(intent)
+    except Exception as e:
+        print(f"[storage] не удалось открыть экран разрешений: {e}")
 
 
 def make_executable(path: str) -> bool:

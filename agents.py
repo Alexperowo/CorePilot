@@ -378,6 +378,45 @@ def cot_suffix(state: SessionState, role: str) -> str:
     return _COT_INSTRUCTION
 
 
+# Минимальные few-shot примеры для каждой JSON-роли: показывают локальной модели
+# ТОЧНЫЙ формат ответа. Используются только для локальных ролей, где response_format
+# недоступен — cloud-модели и так следуют инструкциям. Примеры намеренно короткие,
+# чтобы не раздувать контекст (локальные модели ограничены по контексту).
+_JSON_EXAMPLES: dict[str, str] = {
+    "gatherer": (
+        '\nПРИМЕР ОТВЕТА (точный формат, без markdown, без пояснений):\n'
+        '{"task_summary":"исправить баг в функции parse","primary_file":"parser.py",'
+        '"files_to_modify":[{"filepath":"parser.py","reason":"содержит баг","current_code_snippet":"","size_kb":0}],'
+        '"dependencies_found":[],"project_context":{},"ambiguities":[]}'
+    ),
+    "architect": (
+        '\nПРИМЕР ОТВЕТА (точный формат, без markdown, без пояснений):\n'
+        '{"task_summary":"исправить баг","risk_analysis":"низкий","approach":"точечная правка",'
+        '"execution_steps":[{"step_id":1,"file":"parser.py","action":"modify","instruction":"заменить X на Y",'
+        '"code_context":"","constraints":[]}],"test_criteria":["функция возвращает ожидаемое"]}'
+    ),
+    "coder": (
+        '\nПРИМЕР ОТВЕТА (точный формат, без markdown, без пояснений):\n'
+        '{"patches":[{"filepath":"parser.py","code":"# полный новый код файла\\nimport json\\n\\ndef parse(s):\\n    return json.loads(s)\\n","change_summary":"исправлен баг","lines_changed":"3-5"}],'
+        '"no_changes_needed":false,"fixer_notes":""}'
+    ),
+}
+
+
+def json_few_shot_suffix(state: SessionState, role: str) -> str:
+    """Возвращает few-shot пример JSON для локальных ролей без response_format.
+    Для cloud-ролей — пусто (незачем раздувать промпт).
+    Для ролей с active response_format=json_object — пусто (формат уже принудительный)."""
+    if role not in _JSON_ROLES:
+        return ""
+    if _role_mode(state, role) != "local":
+        return ""
+    # Если response_format включён и модель его поддерживает — few-shot не нужен.
+    # Проверяем _NO_RF_CACHE: если модель туда НЕ попала — значит response_format работает.
+    # Для простоты: добавляем few-shot всегда для локальных JSON-ролей (безвредно если RF есть).
+    return _JSON_EXAMPLES.get(role, "")
+
+
 # === Лестница эскалации: Оракул-Титан переписывает залипший код =============
 
 _TITAN_SYSTEM = (
