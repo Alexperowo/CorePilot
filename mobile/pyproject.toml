@@ -1,0 +1,64 @@
+[project]
+name = "corepilot_mobile"
+version = "1.0.0"
+description = "CorePilot Mobile — Edge AI Node и пульт управления ПК-фабрикой агентов"
+requires-python = ">=3.10"
+dependencies = [
+    "flet==0.80.5",
+]
+
+# Зависимости ТОЛЬКО для Android-сборки (pyjnius не имеет wheel под другие платформы,
+# и на ПК-разработке он не нужен — android_bridge сам определяет окружение).
+[tool.flet.android.dependencies]
+pyjnius = "*"
+
+[tool.flet]
+# Имя продукта и организация для пакета.
+product = "CorePilot Mobile"
+org = "com.corepilot"
+company = "CorePilot"
+
+[tool.flet.android]
+# === Движок llama-server ВСТРАИВАЕТСЯ В APK как нативная библиотека ===
+# На нерутованном Android исполнять бинарник из публичной папки нельзя
+# (Download = noexec; домашняя папка = W^X при targetAPI>=29). Единственное
+# исполняемое место — nativeLibraryDir. Поэтому собранный под arm64-v8a
+# llama-server и все его .so (libllama.so, libggml*.so, libomp.so и т.п.)
+# кладутся в каталог нативных библиотек APK. Пример (пути зависят от вашей
+# сборки Flet/buildozer; сверьте с актуальной докой Flet по android.libs):
+#
+
+permission."android.permission.INTERNET" = true
+permission."android.permission.READ_EXTERNAL_STORAGE" = true
+permission."android.permission.WRITE_EXTERNAL_STORAGE" = true
+permission."android.permission.MANAGE_EXTERNAL_STORAGE" = true
+min_sdk_version = 26
+target_sdk_version = 36
+
+[tool.flet.android.libs]
+"arm64-v8a/libggml-base.so" = "engine/arm64-v8a/libggml-base.so"
+"arm64-v8a/libggml-cpu-android_armv8.0_1.so" = "engine/arm64-v8a/libggml-cpu-android_armv8.0_1.so"
+"arm64-v8a/libggml-cpu-android_armv8.2_1.so" = "engine/arm64-v8a/libggml-cpu-android_armv8.2_1.so"
+"arm64-v8a/libggml-cpu-android_armv8.2_2.so" = "engine/arm64-v8a/libggml-cpu-android_armv8.2_2.so"
+"arm64-v8a/libggml-cpu-android_armv8.6_1.so" = "engine/arm64-v8a/libggml-cpu-android_armv8.6_1.so"
+"arm64-v8a/libggml-cpu-android_armv9.0_1.so" = "engine/arm64-v8a/libggml-cpu-android_armv9.0_1.so"
+"arm64-v8a/libggml-cpu-android_armv9.2_1.so" = "engine/arm64-v8a/libggml-cpu-android_armv9.2_1.so"
+"arm64-v8a/libggml-cpu-android_armv9.2_2.so" = "engine/arm64-v8a/libggml-cpu-android_armv9.2_2.so"
+"arm64-v8a/libggml-rpc.so" = "engine/arm64-v8a/libggml-rpc.so"
+"arm64-v8a/libggml.so" = "engine/arm64-v8a/libggml.so"
+"arm64-v8a/libllama-batched-bench-impl.so" = "engine/arm64-v8a/libllama-batched-bench-impl.so"
+"arm64-v8a/libllama-bench-impl.so" = "engine/arm64-v8a/libllama-bench-impl.so"
+"arm64-v8a/libllama-cli-impl.so" = "engine/arm64-v8a/libllama-cli-impl.so"
+"arm64-v8a/libllama-common.so" = "engine/arm64-v8a/libllama-common.so"
+"arm64-v8a/libllama-completion-impl.so" = "engine/arm64-v8a/libllama-completion-impl.so"
+"arm64-v8a/libllama-fit-params-impl.so" = "engine/arm64-v8a/libllama-fit-params-impl.so"
+"arm64-v8a/libllama-perplexity-impl.so" = "engine/arm64-v8a/libllama-perplexity-impl.so"
+"arm64-v8a/libllama-quantize-impl.so" = "engine/arm64-v8a/libllama-quantize-impl.so"
+"arm64-v8a/libllama-server-impl.so" = "engine/arm64-v8a/libllama-server-impl.so"
+"arm64-v8a/libllama-server.so" = "engine/arm64-v8a/libllama-server.so"
+"arm64-v8a/libllama.so" = "engine/arm64-v8a/libllama.so"
+"arm64-v8a/libmtmd.so" = "engine/arm64-v8a/libmtmd.so"
+
+[tool.flet.app]
+# Точка входа.
+module = "main"

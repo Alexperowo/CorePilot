@@ -1,0 +1,12 @@
+# CorePilot Mobile — зависимости для сборки Flet.
+# ВАЖНО: только прямые зависимости (не используйте pip freeze — он добавит
+# пакеты, несовместимые с Android-сборкой).
+#
+# pyjnius НЕ указывается здесь — он только для Android и задан в
+# pyproject.toml ([tool.flet.android.dependencies]).
+#
+# Flet >=0.27.0 — минимальная версия с NavigationBar, page.run_thread, ft.Markdown,
+# page.open(SnackBar), ft.Icons и SafeArea. Верхняя граница не фиксируется, чтобы
+# не блокировать обновления патчей безопасности.
+
+flet==0.80.5

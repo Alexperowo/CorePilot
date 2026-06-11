@@ -1,0 +1,59 @@
+# Секреты — НИКОГДА не коммитить
+secrets.toml
+.chainlit/secrets.toml
+
+# Портативная сборка и локальные дистрибутивы
+CorePilot_Portable/
+CorePilot*.zip
+*.zip
+*.rar
+*.7z
+*.tar.gz
+
+# Сессии, runtime-данные и локальные базы данных
+.ai_session.json
+.ai_memory.txt
+factory_data.db
+factory_data.db-*
+.ai_backups/
+.ai_checkpoints/
+.ai_cleaner_quarantine/
+temp_fieldtest_project/
+corepilot_fieldtest.txt
+*.log
+*.processing
+
+# Очередь задач Демона и данные
+auto_tasks/
+_corepilot_data/
+user_data/
+
+# Локальные движки инференса и бинарники (скачиваются скриптами)
+llama/
+mobile/engine/
+
+# Python кэш и окружение
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+*.egg-info/
+
+# Мобильное приложение (Flutter / Flet сборка)
+mobile/build/
+mobile/.dart_tool/
+mobile/.gradle/
+mobile/build_log.txt
+
+# IDE / Системные файлы ОС
+.idea/
+.vscode/
+.vs/
+.claude/
+.files/
+Thumbs.db
+desktop.ini
+_gitignore
+make_github_release.py
+
