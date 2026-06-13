@@ -487,35 +487,34 @@ def search_code(query: str, file_extensions: str = "") -> str:
 
 @tool("Web Search")
 def web_search(query: str) -> str:
-    """Searches the internet for the query using DuckDuckGo and returns text snippets of the top results. Use this to find recent or real-world information."""
-    import urllib.request
-    import urllib.parse
-    import re
-    
-    url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query)
-    req = urllib.request.Request(
-        url, 
-        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
-    )
+    """Searches the internet for the query using DuckDuckGo and returns text snippets and URLs. Use this to find recent or real-world information."""
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
-            html = response.read().decode('utf-8')
-            
-        snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.IGNORECASE | re.DOTALL)
-        titles = re.findall(r'<h2 class="result__title">.*?<a[^>]*>(.*?)</a>', html, re.IGNORECASE | re.DOTALL)
-        
-        def clean_html(text):
-            text = re.sub(r'<[^>]+>', '', text)
-            text = text.replace('&quot;', '"').replace('&apos;', "'").replace('&amp;', '&').replace('&#x27;', "'").replace('&lt;', '<').replace('&gt;', '>')
-            return text.strip()
-            
+        from duckduckgo_search import DDGS
         results = []
-        for t, s in zip(titles[:5], snippets[:5]):
-            results.append(f"Title: {clean_html(t)}\nSnippet: {clean_html(s)}\n")
-            
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=5):
+                results.append(f"Title: {r.get('title')}\nLink: {r.get('href')}\nSnippet: {r.get('body')}\n")
         if not results:
-            return "Ничего не найдено или DuckDuckGo заблокировал запрос."
-            
-        return "Результаты поиска (DuckDuckGo):\n\n" + "\n".join(results)
+            return "Ничего не найдено."
+        return "Результаты поиска:\n\n" + "\n".join(results)
+    except ImportError:
+        return "Ошибка: библиотека duckduckgo-search не установлена. Введите 'pip install duckduckgo-search' в терминале."
     except Exception as e:
         return f"Ошибка поиска: {e}"
+
+@tool("Read Web Page")
+def read_web_page(url: str) -> str:
+    """Reads the text content of a web page URL. Use this to read the full text of a link found in Web Search."""
+    import urllib.request
+    import re
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            html = response.read().decode('utf-8', errors='ignore')
+        html = re.sub(r'<script.*?>.*?</script>', '', html, flags=re.IGNORECASE | re.DOTALL)
+        html = re.sub(r'<style.*?>.*?</style>', '', html, flags=re.IGNORECASE | re.DOTALL)
+        text = re.sub(r'<[^>]+>', ' ', html)
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text[:15000]
+    except Exception as e:
+        return f"Ошибка чтения страницы {url}: {e}"

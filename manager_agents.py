@@ -29,6 +29,7 @@ def make_manager_crew(state: SessionState, llm: LLM) -> tuple[Agent, Agent]:
     tools = [toolset.get_project_tree, toolset.read_file_content]
     if getattr(state, "web_search_enabled", False):
         tools.append(toolset.web_search)
+        tools.append(toolset.read_web_page)
     po = Agent(
         role="Product Owner", goal="Сформировать детальную концепцию.",
         backstory=_PO_BACKSTORY, llm=llm, tools=tools,

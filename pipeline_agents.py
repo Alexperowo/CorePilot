@@ -11,6 +11,7 @@ def make_code_gatherer(llm: LLM, max_iter: int, max_rpm: int | None, spec: str |
     tools = [toolset.get_project_tree, toolset.read_file_content, toolset.search_code]
     if getattr(get_runtime_context().state, "web_search_enabled", False):
         tools.append(toolset.web_search)
+        tools.append(toolset.read_web_page)
     return Agent(role="CodeGatherer", goal="Собрать JSON-манифест. НЕ писать код.", backstory=bs+spd, llm=llm, tools=tools, max_iter=max_iter, max_rpm=max_rpm, allow_delegation=False)
 
 def make_system_architect(llm: LLM, max_iter: int, max_rpm: int | None, spec: str | None, spd: str) -> Agent:
@@ -18,6 +19,7 @@ def make_system_architect(llm: LLM, max_iter: int, max_rpm: int | None, spec: st
     tools = []
     if getattr(get_runtime_context().state, "web_search_enabled", False):
         tools.append(toolset.web_search)
+        tools.append(toolset.read_web_page)
     return Agent(role="SystemArchitect", goal="Построить JSON-план. НЕ писать код.", backstory=bs+spd, llm=llm, tools=tools, max_iter=max(3, max_iter//2), max_rpm=max_rpm, allow_delegation=False)
 
 def make_code_fixer(llm: LLM, max_iter: int, max_rpm: int | None, spec: str | None, spd: str) -> Agent:
@@ -25,6 +27,7 @@ def make_code_fixer(llm: LLM, max_iter: int, max_rpm: int | None, spec: str | No
     tools = [toolset.read_file_content, toolset.run_terminal_command, toolset.search_code]
     if getattr(get_runtime_context().state, "web_search_enabled", False):
         tools.append(toolset.web_search)
+        tools.append(toolset.read_web_page)
     return Agent(role="CodeFixer", goal="Реализовать план. Вернуть JSON с кодом.", backstory=bs+spd, llm=llm, tools=tools, max_iter=max_iter, max_rpm=max_rpm, allow_delegation=False)
 
 def make_qa_auditor(llm: LLM, max_iter: int, max_rpm: int | None, spec: str | None, spd: str) -> Agent:
@@ -32,6 +35,7 @@ def make_qa_auditor(llm: LLM, max_iter: int, max_rpm: int | None, spec: str | No
     tools = [toolset.read_file_content]
     if getattr(get_runtime_context().state, "web_search_enabled", False):
         tools.append(toolset.web_search)
+        tools.append(toolset.read_web_page)
     return Agent(role="QAAuditor", goal="Сравнить план с патчами.", backstory=bs+spd, llm=llm, tools=tools, max_iter=max(3, max_iter//2), max_rpm=max_rpm, allow_delegation=False)
 
 def make_pipeline_agents(state: SessionState, specialist_role: str | None = None) -> tuple[Agent, Agent, Agent, Agent]:
