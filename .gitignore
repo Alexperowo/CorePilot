@@ -61,5 +61,15 @@ Thumbs.db
 desktop.ini
 _gitignore
 make_github_release.py
+make_github_release.py
 pr_plan_and_promo_materials.md
 
+# Рабочие инструкции (не для публикации)
+CLAUDE.md
+NEXT_STEPS.md
+ROADMAP_DEV.md
+FINAL_QA.md
+MOBILE_DESKTOP_TEST.md
+GITHUB_TASKS.md
+NOTES_LEARNINGS.md
+REVIEW_REQUEST.md
