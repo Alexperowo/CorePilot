@@ -474,8 +474,9 @@ SETTINGS_SCHEMA = {
         ("titan_backend", "choice:lmstudio,ollama,llamacpp,lemonade", "Бэкенд Титана"),
     ],
     "Бэкенды": [
-        ("local_backend", "choice:lmstudio,ollama,llamacpp,lemonade", "Локальный бэкенд (по умолч.)"),
+        ("local_backend", "choice:lmstudio,ollama,llamacpp,lemonade,mobile", "Локальный бэкенд (по умолч.)"),
         ("local_base_url", "str", "URL локального бэкенда"),
+        ("mobile_base_url", "str", "URL компаньона (IP Android)"),
     ],
     "Генерация изображений": [
         ("image_source", "choice:forge,comfy,cloud", "Источник (forge / comfy / облако)"),
@@ -502,7 +503,7 @@ ROLE_LABELS = {"gatherer": "Сборщик", "architect": "Архитектор"
                "auditor": "Аудитор", "oracle": "Оракул"}
 PROVIDERS = ["groq", "openrouter", "cerebras", "sambanova", "huggingface", "cohere",
              "anthropic", "openai", "gemini", "mistral", "deepseek"]
-BACKENDS = ["lmstudio", "ollama", "llamacpp", "lemonade"]
+BACKENDS = ["lmstudio", "ollama", "llamacpp", "lemonade", "mobile"]
 # Источники для роли в UI: локальные бэкенды + облако одним списком.
 # 'cloud' означает облачные вычисления (тогда работает provider+model).
 SOURCES = BACKENDS + ["cloud"]
@@ -573,10 +574,11 @@ def list_local_models(backend: str, base_url: str = "") -> list[str]:
                 url = "http://localhost:11434"
             r = requests.get(f"{url.rstrip('/').replace('/v1','')}/api/tags", timeout=4)
             return [m["name"] for m in r.json().get("models", [])]
-        # lmstudio / llamacpp / lemonade — OpenAI-совместимый /models
+        # lmstudio / llamacpp / lemonade / mobile — OpenAI-совместимый /models
         url = base_url or {"lmstudio": "http://localhost:1234/v1",
                            "llamacpp": "http://localhost:8080/v1",
-                           "lemonade": "http://localhost:8000/v1"}.get(backend, "")
+                           "lemonade": "http://localhost:8000/v1",
+                           "mobile": "http://192.168.1.1:8080/v1"}.get(backend, "")
         if not url:
             return []
         r = requests.get(f"{url.rstrip('/')}/models", timeout=4)

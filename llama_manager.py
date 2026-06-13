@@ -24,7 +24,7 @@ from pathlib import Path
 # --- Константы и пути (определяются относительно расположения скрипта) --------
 HERE = Path(__file__).resolve().parent
 # В портативной сборке структура: <root>/app/llama_manager.py, <root>/models, <root>/llama
-PORTABLE_ROOT = HERE.parent
+PORTABLE_ROOT = HERE
 DEFAULT_MODELS = os.environ.get("LLAMA_MODELS_DIR") or str(PORTABLE_ROOT / "models")
 DEFAULT_BIN = os.environ.get("LLAMA_BIN_DIR") or str(PORTABLE_ROOT / "llama")
 PORT = os.environ.get("LLAMA_PORT", "8080")

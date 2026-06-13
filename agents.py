@@ -19,6 +19,7 @@ BACKEND_CONFIGS: dict[str, dict] = {
     "lmstudio": {"base_url": "http://localhost:1234/v1",  "api_key": "lm-studio", "prefix": "openai/"},
     "llamacpp": {"base_url": "http://localhost:8080/v1",  "api_key": "none",      "prefix": "openai/"},
     "lemonade": {"base_url": "http://localhost:8000/v1",  "api_key": "lemonade",  "prefix": "openai/"},
+    "mobile":   {"base_url": "http://192.168.1.1:8080/v1","api_key": "none",      "prefix": "openai/"},
 }
 _LOCAL_LLM_PREFIXES: frozenset[str] = frozenset(c['prefix'] for c in BACKEND_CONFIGS.values())
 
@@ -546,11 +547,26 @@ def get_backend_config(state: SessionState, backend: Optional[str] = None) -> di
     backend = backend or getattr(state, "local_backend", "lmstudio")
     cfg = BACKEND_CONFIGS.get(backend, BACKEND_CONFIGS["lmstudio"])
     base_url = cfg["base_url"]
-    if backend == getattr(state, "local_backend", "lmstudio"):
+    if backend == "mobile":
+        override = (getattr(state, "mobile_base_url", None) or "").strip()
+        if override:
+            base_url = override
+    elif backend == getattr(state, "local_backend", "lmstudio"):
         override = (getattr(state, "local_base_url", None) or "").strip()
         if override:
             base_url = override
-    return {**cfg, "base_url": base_url}
+    
+    api_key = cfg.get("api_key", "none")
+    if backend == "llamacpp":
+        try:
+            import llama_manager as lm
+            st = lm.server_status()
+            if st.get("token"):
+                api_key = st["token"]
+        except Exception:
+            pass
+            
+    return {**cfg, "base_url": base_url, "api_key": api_key}
 
 _LOCAL_ROLES = ("gatherer", "architect", "coder", "auditor", "oracle")
 

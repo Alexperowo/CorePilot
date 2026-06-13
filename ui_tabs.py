@@ -511,7 +511,7 @@ class PipelineTab:
             dpg.add_text("", tag="pipe_verdict", color=(240, 240, 245), wrap=900)
             # Просмотр diff
             dpg.add_text("Изменения:", color=(170, 170, 175))
-            dpg.add_child_window(tag="pipe_diff_area", height=300, border=True)
+            dpg.add_child_window(tag="pipe_diff_area", height=-50, border=True)
             with dpg.group(horizontal=True):
                 dpg.add_button(label="[v] Применить изменения", callback=self._apply,
                                tag="pipe_apply_btn", show=False)
@@ -664,13 +664,13 @@ class CleanerTab:
                 dpg.add_button(label="[x] Снять всё", callback=lambda: self._select_all(False))
                 dpg.add_button(label="[Q] В карантин выбранное", callback=self._quarantine,
                                tag="cleaner_quar_btn")
-            dpg.add_child_window(tag="cleaner_results", height=280, border=True)
+            dpg.add_child_window(tag="cleaner_results", height=-220, border=True)
             dpg.add_separator()
             # Карантин
             with dpg.group(horizontal=True):
                 dpg.add_text("Карантин:", color=(170, 170, 175))
                 dpg.add_button(label="[O] Обновить сессии", callback=self._refresh_sessions)
-            dpg.add_child_window(tag="cleaner_sessions", height=140, border=True)
+            dpg.add_child_window(tag="cleaner_sessions", height=-1, border=True)
 
     def _scan(self, kind: str):
         if not kind:
@@ -1206,7 +1206,7 @@ class QaTab:
                 dpg.add_text("", tag="qa_verdict", color=(240, 240, 245))
                 dpg.add_button(label="[~] История", callback=self._show_history)
             dpg.add_separator()
-            dpg.add_child_window(tag="qa_report", height=340, border=True)
+            dpg.add_child_window(tag="qa_report", height=-1, border=True)
 
     def _show_history(self):
         hist = svc.qa_history(limit=30)
@@ -1302,25 +1302,25 @@ class HealthTab:
             dpg.add_text("Состояние фабрики", color=(120, 200, 255))
             dpg.add_separator()
             with dpg.group(horizontal=True):
-                with dpg.child_window(width=270, height=320, border=True):
+                with dpg.child_window(width=320, height=-60, border=True):
                     dpg.add_text("ДЕМОН", color=(170, 170, 175))
                     dpg.add_text("—", tag="health_daemon", color=(240, 240, 245), wrap=250)
                     dpg.add_spacer(height=6)
                     dpg.add_text("LLAMA-СЕРВЕР", color=(170, 170, 175))
                     dpg.add_text("—", tag="health_llama", color=(240, 240, 245), wrap=250)
-                with dpg.child_window(width=270, height=320, border=True):
+                with dpg.child_window(width=320, height=-60, border=True):
                     dpg.add_text("ЗАДАЧИ", color=(170, 170, 175))
                     for st in (svc.STATUS_PENDING, svc.STATUS_PROCESSING, svc.STATUS_FROZEN,
                                svc.STATUS_DONE, svc.STATUS_FAILED):
                         dpg.add_text("—", tag=f"health_cnt_{st}", color=STATUS_COLORS[st])
-                with dpg.child_window(width=270, height=320, border=True):
+                with dpg.child_window(width=320, height=-60, border=True):
                     dpg.add_text("ПОСЛЕДНИЙ QA-ТЕСТ", color=(170, 170, 175))
                     dpg.add_text("—", tag="health_qa", color=(240, 240, 245), wrap=250)
                     dpg.add_spacer(height=6)
                     dpg.add_text("КВОТЫ", color=(170, 170, 175))
                     dpg.add_text("нажмите «Обновить квоты»", tag="health_quota",
                                  color=(180, 180, 185), wrap=250)
-                with dpg.child_window(width=270, height=320, border=True):
+                with dpg.child_window(width=320, height=-60, border=True):
                     dpg.add_text("ПОДДЕРЖКА ПРОЕКТА", color=(170, 170, 175))
                     import os
                     has_qr = False
