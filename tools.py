@@ -484,3 +484,38 @@ def search_code(query: str, file_extensions: str = "") -> str:
     if not results:
         return f"🔍 Совпадений для «{query}» не найдено."
     return (f"🔍 Найдено совпадений: {len(results)}\n" + "\n".join(results))[:lim]
+
+@tool("Web Search")
+def web_search(query: str) -> str:
+    """Searches the internet for the query using DuckDuckGo and returns text snippets of the top results. Use this to find recent or real-world information."""
+    import urllib.request
+    import urllib.parse
+    import re
+    
+    url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query)
+    req = urllib.request.Request(
+        url, 
+        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            html = response.read().decode('utf-8')
+            
+        snippets = re.findall(r'<a class="result__snippet[^>]*>(.*?)</a>', html, re.IGNORECASE | re.DOTALL)
+        titles = re.findall(r'<h2 class="result__title">.*?<a[^>]*>(.*?)</a>', html, re.IGNORECASE | re.DOTALL)
+        
+        def clean_html(text):
+            text = re.sub(r'<[^>]+>', '', text)
+            text = text.replace('&quot;', '"').replace('&apos;', "'").replace('&amp;', '&').replace('&#x27;', "'").replace('&lt;', '<').replace('&gt;', '>')
+            return text.strip()
+            
+        results = []
+        for t, s in zip(titles[:5], snippets[:5]):
+            results.append(f"Title: {clean_html(t)}\nSnippet: {clean_html(s)}\n")
+            
+        if not results:
+            return "Ничего не найдено или DuckDuckGo заблокировал запрос."
+            
+        return "Результаты поиска (DuckDuckGo):\n\n" + "\n".join(results)
+    except Exception as e:
+        return f"Ошибка поиска: {e}"

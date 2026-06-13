@@ -26,9 +26,12 @@ _SM_BACKSTORY = """Ты — Scrum Master. Преврати концепцию в
 
 def make_manager_crew(state: SessionState, llm: LLM) -> tuple[Agent, Agent]:
     import tools as toolset
+    tools = [toolset.get_project_tree, toolset.read_file_content]
+    if getattr(state, "web_search_enabled", False):
+        tools.append(toolset.web_search)
     po = Agent(
         role="Product Owner", goal="Сформировать детальную концепцию.",
-        backstory=_PO_BACKSTORY, llm=llm, tools=[toolset.get_project_tree, toolset.read_file_content],
+        backstory=_PO_BACKSTORY, llm=llm, tools=tools,
         max_iter=getattr(state, "ui_max_iter", 8), allow_delegation=False
     )
     sm = Agent(
