@@ -845,8 +845,75 @@ class SettingsTab:
             dpg.add_slider_int(label=label, tag=tag, default_value=int(cur or lo),
                                min_value=int(lo), max_value=int(hi), width=-250)
         else:  # str
-            dpg.add_input_text(label=label, tag=tag, width=-250,
-                               default_value=str(cur) if cur is not None else "")
+            if key == "mobile_base_url":
+                with dpg.group(horizontal=True):
+                    dpg.add_input_text(tag=tag, width=-350,
+                                       default_value=str(cur) if cur is not None else "")
+                    dpg.add_button(label="[?] Поиск Android", callback=self._find_android)
+                    dpg.add_text(label)
+            else:
+                dpg.add_input_text(label=label, tag=tag, width=-250,
+                                   default_value=str(cur) if cur is not None else "")
+
+    def _find_android(self):
+        import threading
+        dpg.set_value(self._widgets["mobile_base_url"], "Поиск в сети...")
+        threading.Thread(target=self._do_find_android, daemon=True).start()
+
+    def _do_find_android(self):
+        import socket
+        import concurrent.futures
+        import requests
+        
+        try:
+            r = requests.get("http://127.0.0.1:8080/v1/models", timeout=0.5)
+            if r.status_code == 200:
+                dpg.set_value(self._widgets["mobile_base_url"], "http://127.0.0.1:8080/v1")
+                return
+        except Exception:
+            pass
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+        except Exception:
+            ip = "192.168.1.1"
+        finally:
+            s.close()
+            
+        parts = ip.split('.')
+        base = f"{parts[0]}.{parts[1]}.{parts[2]}."
+        
+        found_url = ""
+        def check_ip(i):
+            test_ip = f"{base}{i}"
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.3)
+                result = sock.connect_ex((test_ip, 8080))
+                sock.close()
+                if result == 0:
+                    url = f"http://{test_ip}:8080/v1"
+                    r = requests.get(f"{url}/models", timeout=0.5)
+                    if r.status_code == 200:
+                        return url
+            except Exception:
+                pass
+            return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+            futures = [executor.submit(check_ip, i) for i in range(1, 255)]
+            for future in concurrent.futures.as_completed(futures):
+                res = future.result()
+                if res:
+                    found_url = res
+                    break
+        
+        if found_url:
+            dpg.set_value(self._widgets["mobile_base_url"], found_url)
+        else:
+            dpg.set_value(self._widgets["mobile_base_url"], "")
 
     def _build_role_rows(self):
         """Строит строки ролей (источник/провайдер/модель) внутри role_rows_container.
