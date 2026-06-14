@@ -399,6 +399,7 @@ def _generate_image_cloud(state, user_request: str) -> str:
     model = (getattr(state, "image_cloud_model", "") or meta["default_model"]).strip()
     url = meta["url_tmpl"].format(model=model)
 
+    agents.peek_api_key(provider)  # trigger lazy load of API_KEYS
     keys = list(agents.API_KEYS.get(provider, []))
     if not keys:
         return (f"⚠️ Нет ключа для облачной генерации ({provider}). Добавьте его в "
@@ -489,7 +490,10 @@ def search_code(query: str, file_extensions: str = "") -> str:
 def web_search(query: str) -> str:
     """Searches the internet for the query using DuckDuckGo and returns text snippets and URLs. Use this to find recent or real-world information."""
     try:
-        from duckduckgo_search import DDGS
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
         results = []
         with DDGS() as ddgs:
             for r in ddgs.text(query, max_results=5):
