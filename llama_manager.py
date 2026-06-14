@@ -340,6 +340,14 @@ def start_server(model_path: str, ctx: int = 4096, ngl: int = 99,
     if _SERVER_PROC is not None and _SERVER_PROC.poll() is None:
         return {"ok": False, "message": "Сервер уже запущен. Остановите перед перезапуском.",
                 "status": server_status()}
+    # Проверяем, не занят ли порт другим процессом (например, предыдущей сессией).
+    import socket as _sock
+    with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as _s:
+        if _s.connect_ex(("127.0.0.1", int(PORT))) == 0:
+            return {"ok": False,
+                    "message": f"Порт {PORT} уже занят другим процессом. "
+                               f"Закройте предыдущий llama-server или измените LLAMA_PORT.",
+                    "status": server_status()}
     server = find_server_binary()
     if not server:
         return {"ok": False, "message": f"llama-server не найден в {DEFAULT_BIN}. "
