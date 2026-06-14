@@ -498,8 +498,8 @@ def _execute_task(claim: Path, db: DatabaseManager, state: SessionState) -> tupl
                 logger.info("↩️  Этап '%s' взят из чекпойнта.", name)
                 return cached
 
-            def _once(descr: str) -> str:
-                task = Task(description=descr, agent=agent, expected_output="результат этапа")
+            def _once(descr: str, expected: str = "результат этапа") -> str:
+                task = Task(description=descr, agent=agent, expected_output=expected)
                 crew = Crew(agents=[agent], tasks=[task])
                 ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
                 fut = ex.submit(safe_kickoff, crew, state)
@@ -509,14 +509,19 @@ def _execute_task(claim: Path, db: DatabaseManager, state: SessionState) -> tupl
                     ex.shutdown(wait=False, cancel_futures=True)
                 return getattr(task.output, "raw", None) or str(res)
 
-            raw = _once(description)
+            _FIXER_SCHEMA = ('{"patches":[{"filepath":"file.py","code":"full new file content",'
+                             '"change_summary":"what changed","lines_changed":"1-10"}],'
+                             '"no_changes_needed":false,"fixer_notes":""}')
+            exp = (f"JSON строго по схеме (no_changes_needed ВСЕГДА false когда есть изменения): {_FIXER_SCHEMA}"
+                   if name == "fix" else "результат этапа")
+            raw = _once(description, expected=exp)
             if validator and not validator(raw):
                 logger.warning("Этап '%s': вывод не прошёл валидацию JSON — повтор с "
                                "усиленной инструкцией формата.", name)
                 fix = (description + "\n\nВНИМАНИЕ: предыдущий ответ был невалидным. "
                        "Верни СТРОГО валидный JSON-объект и НИЧЕГО больше — "
                        "без markdown-обёрток, пояснений и текста до/после.")
-                raw2 = _once(fix)
+                raw2 = _once(fix, expected=exp)
                 if validator(raw2):
                     raw = raw2
                 else:

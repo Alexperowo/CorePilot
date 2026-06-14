@@ -727,6 +727,10 @@ def run_pipeline(request: str, progress=None, state=None) -> PipelineResult:
         token = set_runtime_context(ctx)
         gatherer, architect, fixer, auditor = make_pipeline_agents(st, None)
 
+        _FIXER_SCHEMA = ('{"patches":[{"filepath":"file.py","code":"full new file content",'
+                         '"change_summary":"what changed","lines_changed":"1-10"}],'
+                         '"no_changes_needed":false,"fixer_notes":""}')
+
         def _stage(name, agent, desc, validator=None):
             """Этап конвейера. Если validator(raw) вернул False (модель выдала
             невалидный JSON — сервер мог 'fail open'), один повтор с усиленной
@@ -736,17 +740,20 @@ def run_pipeline(request: str, progress=None, state=None) -> PipelineResult:
                 _p(name, "из чекпойнта")
                 return cached
 
-            def _once(d):
-                task = Task(description=d, agent=agent, expected_output="результат")
+            def _once(d, expected="результат"):
+                task = Task(description=d, agent=agent, expected_output=expected)
                 raw = str(safe_kickoff(Crew(agents=[agent], tasks=[task]), st))
                 return getattr(task.output, "raw", None) or raw
 
-            raw = _once(desc)
+            # Fixer получает явную JSON-схему в expected_output (cloud-модели не знают FixerOutput).
+            exp = (f"JSON строго по схеме (no_changes_needed ВСЕГДА false когда есть изменения): {_FIXER_SCHEMA}"
+                   if name == "fix" else "результат")
+            raw = _once(desc, expected=exp)
             if validator and not validator(raw):
                 _p(name, "повтор (невалидный JSON)…")
                 raw2 = _once(desc + "\n\nВНИМАНИЕ: предыдущий ответ был невалиден. "
                              "Верни СТРОГО валидный JSON и ничего больше — без markdown, "
-                             "пояснений и текста до/после.")
+                             "пояснений и текста до/после.", expected=exp)
                 if validator(raw2):
                     raw = raw2
             ckpt.save(name, raw)
