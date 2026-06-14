@@ -66,13 +66,25 @@ pr_plan_and_promo_materials.md
 
 # Рабочие инструкции (не для публикации)
 CLAUDE.md
+AGENTS.md
+CONSTITUTION.md
 NEXT_STEPS.md
 ROADMAP_DEV.md
 FINAL_QA.md
+LIVE_TEST.md
 MOBILE_DESKTOP_TEST.md
 GITHUB_TASKS.md
+GITHUB_FIX.md
 NOTES_LEARNINGS.md
 REVIEW_REQUEST.md
+Plan/
+
+# Тестовые и экспериментальные файлы
+android_app/
+native_android_app/
+setup_test.py
+test_agent_web.py
+tools_gradle.py
 
 server_token.txt
 window_dump.xml
