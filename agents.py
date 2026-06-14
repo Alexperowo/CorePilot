@@ -468,13 +468,8 @@ def _titan_llm_chain(state: SessionState):
 
 
 def _free_local_models_for_titan(state: SessionState) -> None:
-    """Перед подъёмом ЛОКАЛЬНОГО Титана (14-26B) освобождает память от малых
-    локальных моделей рабочих ролей. Защита от OOM: при 16GB RAM + 8GB VRAM
-    7-8B и Титан одновременно не помещаются. Выгружаем всё локальное, что можем.
-
-    Ollama выгружается через keep_alive=0. Для llama.cpp/LM Studio программной
-    выгрузки по API нет — но если сервером управляем мы (llama_manager), его
-    останавливаем, чтобы освободить память под Титана."""
+    """Перед подъёмом ЛОКАЛЬНОГО Титана освобождает всю локальную память.
+    Ollama: keep_alive=0. LM Studio: /api/v0/models/unload. llama.cpp: stop_server()."""
     seen = set()
     for role in ("coder", "gatherer", "architect", "auditor"):
         if _role_mode(state, role) != "local":
@@ -485,15 +480,13 @@ def _free_local_models_for_titan(state: SessionState) -> None:
         if key in seen:
             continue
         seen.add(key)
-        if backend == "ollama" and model:
-            cleanup_old_llm(state, [model])  # keep_alive=0
-    # Если локальный сервер llama.cpp под нашим управлением — останавливаем,
-    # освобождая VRAM/RAM. Титан-local поднимется на своём бэкенде.
+        # Выгружаем все локальные бэкенды, включая LM Studio
+        unload_role_llm(state, role)
+    # Останавливаем управляемый llama-server — освобождает VRAM полностью.
     try:
         import llama_manager as lm
-        st = lm.server_status()
-        if st.get("running"):
-            logger.info("Останавливаю управляемый llama-server перед подъёмом Титана (память).")
+        if lm.server_status().get("running"):
+            logger.info("Останавливаю llama-server перед подъёмом Титана.")
             lm.stop_server()
     except Exception as e:
         logger.debug("Не удалось остановить llama-server перед Титаном: %s", e)
@@ -632,22 +625,21 @@ def unload_role_llm(state: SessionState, role: str) -> None:
         cleanup_old_llm(state, [model])
         return
     if backend == "lmstudio":
-        # LM Studio: программная выгрузка из памяти через REST (порт сервера).
+        # LM Studio: выгрузка через официальный Python SDK (WebSocket).
+        # REST-эндпоинт выгрузки в LM Studio отсутствует.
         try:
-            import requests
-            base = (getattr(state, "local_base_url", "") or "http://localhost:1234/v1")
-            host = base.rstrip("/").replace("/v1", "")
-            # v0 принимает model, v1 — instance_id; пробуем оба, ошибки глушим.
-            for url, payload in (
-                (f"{host}/api/v0/models/unload", {"model": model}),
-                (f"{host}/api/v1/models/unload", {"instance_id": model}),
-            ):
-                try:
-                    requests.post(url, json=payload, timeout=4)
-                except Exception:
-                    continue
-        except Exception:
-            pass
+            import lmstudio as _lms
+            # Берём URL из BACKEND_CONFIGS, а не из local_base_url
+            # (local_base_url может указывать на llamacpp/8080, не на LM Studio/1234).
+            lms_base = BACKEND_CONFIGS["lmstudio"]["base_url"]
+            host = lms_base.rstrip("/").replace("/v1", "").replace("http://", "")
+            client = _lms.Client(host)
+            loaded_ids = {m.identifier for m in client.llm.list_loaded()}
+            if model in loaded_ids:
+                client.llm.unload(model)
+                logger.info("LM Studio: выгружена модель '%s'.", model)
+        except Exception as e:
+            logger.debug("LM Studio unload '%s' не удалось: %s", model, e)
 
 def _same_local_target(state: SessionState, r1: str, r2: str) -> bool:
     """True, если две роли используют ОДНУ локальную модель/бэкенд — тогда выгрузка
