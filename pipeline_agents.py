@@ -1,6 +1,6 @@
 from __future__ import annotations
 from crewai import Agent, LLM
-from utils import SessionState
+from utils import SessionState, get_runtime_context
 from agents import build_role_llm, cot_suffix, json_few_shot_suffix
 import tools as toolset
 

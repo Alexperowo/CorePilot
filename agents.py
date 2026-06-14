@@ -677,7 +677,7 @@ def build_local_llm(state: SessionState, backend: str, model: str, temperature: 
                     force_json: bool = False) -> LLM:
     cfg = get_backend_config(state, backend)
     kwargs = dict(model=f"{cfg['prefix']}{model}", base_url=cfg["base_url"],
-                  api_key=cfg["api_key"], temperature=temperature, timeout=300)
+                  api_key=cfg["api_key"], temperature=temperature, timeout=2400)
     # response_format у локальных моделей по умолчанию НЕ шлём: LM Studio и многие
     # GGUF-сборки его отвергают (`does not support response_format`), что роняет ПЕРВЫЙ
     # же запрос (до срабатывания кэша). Парсер _extract_json и так надёжно достаёт JSON
