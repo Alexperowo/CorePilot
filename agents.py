@@ -405,16 +405,16 @@ _JSON_EXAMPLES: dict[str, str] = {
 
 
 def json_few_shot_suffix(state: SessionState, role: str) -> str:
-    """Возвращает few-shot пример JSON для локальных ролей без response_format.
-    Для cloud-ролей — пусто (незачем раздувать промпт).
+    """Возвращает few-shot пример JSON.
+    Для «coder» добавляется всегда (облачные модели не знают схему FixerOutput и
+    без примера возвращают no_changes_needed=true). Для остальных JSON-ролей —
+    только при локальном бэкенде (cloud-Gatherer/Architect следуют инструкциям).
     Для ролей с active response_format=json_object — пусто (формат уже принудительный)."""
     if role not in _JSON_ROLES:
         return ""
-    if _role_mode(state, role) != "local":
+    # coder: schema example always needed — cloud models guess no_changes_needed=true without it
+    if role != "coder" and _role_mode(state, role) != "local":
         return ""
-    # Если response_format включён и модель его поддерживает — few-shot не нужен.
-    # Проверяем _NO_RF_CACHE: если модель туда НЕ попала — значит response_format работает.
-    # Для простоты: добавляем few-shot всегда для локальных JSON-ролей (безвредно если RF есть).
     return _JSON_EXAMPLES.get(role, "")
 
 

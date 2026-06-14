@@ -128,7 +128,14 @@ async def _step_fix(manifest: GathererManifest, plan: ArchitectPlan, agent, over
             if overlay and not out.no_changes_needed: overlay.apply_dry_fixes(fixer_output_to_patch_models(out))
             await step.stream_token("✅ Из чекпойнта.")
             return out
-        task = Task(description=f"План: {plan.model_dump_json(indent=2)}", agent=agent, expected_output="JSON FixerOutput")
+        _fixer_schema = ('{"patches":[{"filepath":"file.py","code":"full new file content",'
+                         '"change_summary":"what changed","lines_changed":"1-10"}],'
+                         '"no_changes_needed":false,"fixer_notes":""}')
+        task = Task(
+            description=f"Реализуй план. Верни ТОЛЬКО JSON без пояснений.\nПлан: {plan.model_dump_json(indent=2)}",
+            agent=agent,
+            expected_output=f"JSON строго по схеме (no_changes_needed ВСЕГДА false когда есть изменения): {_fixer_schema}",
+        )
         try: res = await asyncio.wait_for(asyncio.to_thread(safe_kickoff, Crew(agents=[agent], tasks=[task]), state), timeout=getattr(state, "ui_step_timeout", 300))
         except asyncio.TimeoutError: raise RuntimeError("⏱ Fixer timeout.")
         raw = _get_raw(task, str(res))
