@@ -124,12 +124,21 @@ def init_api_keys(secrets: dict) -> None:
                         "HF_TOKEN", "HF_API_KEY", "HF_API_TOKEN", "HUGGINGFACE",
                         "HUGGING_FACE_API_KEY", "HUGGINGFACEHUB_API_TOKEN"],
         "cohere": ["COHERE_KEYS", "COHERE_API_KEYS", "COHERE_API_KEY", "COHERE", "CO_API_KEY"],
+        "together": ["TOGETHER_KEYS", "TOGETHER_API_KEYS", "TOGETHER_API_KEY", "TOGETHER",
+                     "TOGETHERAI_API_KEY", "TOGETHER_AI_API_KEY"],
+        "stability": ["STABILITY_KEYS", "STABILITY_API_KEYS", "STABILITY_API_KEY",
+                      "STABILITY", "STABILITY_AI_API_KEY"],
+        "fal": ["FAL_KEYS", "FAL_API_KEYS", "FAL_API_KEY", "FAL", "FAL_KEY",
+                "FALAPIKEY", "FAL_AI_API_KEY"],
+        "replicate": ["REPLICATE_KEYS", "REPLICATE_API_KEYS", "REPLICATE_API_KEY",
+                      "REPLICATE", "REPLICATE_API_TOKEN"],
     }
     # секреты ищем без учёта регистра и пробелов в именах
     norm = {str(k).strip().upper(): v for k, v in secrets.items()}
     with _key_lock:
         for provider in ["gemini", "mistral", "deepseek", "groq", "openrouter",
-                         "openai", "anthropic", "cerebras", "sambanova", "huggingface", "cohere"]:
+                         "openai", "anthropic", "cerebras", "sambanova", "huggingface", "cohere",
+                         "together", "stability", "fal", "replicate"]:
             raw = None
             for alias in _ALIASES[provider]:
                 if norm.get(alias):
@@ -640,6 +649,16 @@ def unload_role_llm(state: SessionState, role: str) -> None:
                 logger.info("LM Studio: выгружена модель '%s'.", model)
         except Exception as e:
             logger.debug("LM Studio unload '%s' не удалось: %s", model, e)
+    if backend == "llamacpp":
+        # llamacpp не поддерживает JIT-загрузку: смена модели = перезапуск сервера.
+        # Здесь только ОСТАНАВЛИВАЕМ сервер; запуск следующей модели выполняется
+        # в maybe_unload_between после того, как известна следующая роль.
+        try:
+            import llama_manager as lm
+            res = lm.stop_server()
+            logger.info("llamacpp: %s", res["message"])
+        except Exception as e:
+            logger.debug("llamacpp stop при unload '%s': %s", model, e)
 
 def _same_local_target(state: SessionState, r1: str, r2: str) -> bool:
     """True, если две роли используют ОДНУ локальную модель/бэкенд — тогда выгрузка
@@ -659,10 +678,34 @@ def maybe_unload_between(state: SessionState, prev_role: str, next_role: str) ->
     if _same_local_target(state, prev_role, next_role):
         return
     unload_role_llm(state, prev_role)
-    # Если следующая роль локальная — дождаться, пока её модель поднимется.
+    # Если следующая роль локальная — дождаться/запустить её модель.
     if _role_mode(state, next_role) == "local":
+        next_backend = getattr(state, f"backend_{next_role}", "")
         next_model = (getattr(state, f"model_{next_role}", "") or "").strip()
-        if next_model:
+        if next_backend == "llamacpp" and next_model:
+            # llamacpp: JIT-загрузки нет — запускаем сервер с новой моделью явно.
+            try:
+                import llama_manager as lm
+                vram_mb = int(getattr(state, "vram_override_mb", 0) or 0) or None
+                res = lm.restart_for_model(next_model, vram_mb=vram_mb)
+                if res["ok"]:
+                    logger.info("llamacpp жонглирование: %s", res["message"])
+                    # Ждём готовности сервера (healthcheck)
+                    import time as _t, requests as _req
+                    base_url = lm.server_status().get("url", "http://127.0.0.1:8080/v1")
+                    health_url = base_url.replace("/v1", "/health")
+                    for _ in range(60):
+                        try:
+                            if _req.get(health_url, timeout=2).status_code == 200:
+                                break
+                        except Exception:
+                            pass
+                        _t.sleep(2)
+                else:
+                    logger.warning("llamacpp restart_for_model: %s", res["message"])
+            except Exception as e:
+                logger.debug("llamacpp жонглирование ошибка: %s", e)
+        elif next_model:
             _wait_local_model_ready(state, next_model)
 
 def build_local_llm(state: SessionState, backend: str, model: str, temperature: float,

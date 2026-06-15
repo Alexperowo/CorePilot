@@ -465,6 +465,8 @@ SETTINGS_SCHEMA = {
         ("force_json_output", "bool", "Принудительный валидный JSON для локальных моделей"),
         ("web_search_enabled", "bool", "Доступ в интернет"),
         ("vram_unload_between_agents", "bool", "Выгружать модель из VRAM между агентами (включите при разных локальных моделях и ≤16ГБ RAM — иначе риск нехватки памяти)"),
+        ("vram_override_mb", "int", "Ручной лимит VRAM (МБ). 0 = автоопределение. Нужно для AMD-карт >4 ГБ: WMI занижает до 4 ГБ из-за 32-битного ограничения."),
+        ("kv_ctv", "str", "Квантование V-кеша KV (если пусто = совпадает с kv_ctk). Пример: iq4_nl. Асимметрия K=q5_1 + V=iq4_nl даёт ~9% экономии VRAM."),
         ("dup_full_hash", "bool", "Полный хэш дубликатов"),
         ("quarantine_same_drive", "bool", "Карантин на диске источника"),
         ("debug_mode", "bool", "Режим отладки"),
@@ -482,10 +484,14 @@ SETTINGS_SCHEMA = {
         ("image_source", "choice:forge,comfy,cloud", "Источник (forge / comfy / облако)"),
         ("forge_url", "str", "SD Forge API URL (для forge)"),
         ("forge_model", "str", "Модель SD Forge (опц.)"),
+        ("forge_upscale", "bool", "Нейросетевой апскейл через Forge ESRGAN после генерации"),
+        ("forge_upscale_scale", "int:2:8", "Масштаб апскейла (2=1024px, 4=2048px/4K, 8=4096px)"),
         ("comfy_url", "str", "ComfyUI API URL (для comfy)"),
         ("comfy_model", "str", "Чекпойнт ComfyUI .safetensors (опц.)"),
-        ("image_provider", "choice:huggingface", "Облачный провайдер (для cloud)"),
-        ("image_cloud_model", "str", "Модель облака (пусто = FLUX.1-schnell)"),
+        ("image_provider", "choice:huggingface,openai,together,stability,fal,replicate",
+         "Облачный провайдер (для cloud)"),
+        ("image_cloud_model", "str",
+         "Модель облака (пусто = дефолт провайдера: FLUX.1-schnell / dall-e-3 / и т.д.)"),
     ],
     "Лимиты": [
         ("ui_max_iter", "int:1:30", "Макс. итераций агентов"),
@@ -952,6 +958,15 @@ def cleaner_delete_forever(session_id: str) -> tuple[bool, str]:
 # Локальный сервер llama.cpp (управление)
 # ===========================================================================
 
+def load_current_session():
+    """Возвращает SessionState из текущего .ai_session.json (для UI, без прямого импорта utils)."""
+    try:
+        from utils import load_session
+        return load_session()
+    except Exception:
+        return None
+
+
 def llama_list_models() -> list[dict]:
     try:
         import llama_manager as lm
@@ -976,8 +991,22 @@ def llama_status() -> dict:
         return {"running": False, "binary_found": False, "url": "", "model": "", "error": str(e)}
 
 
-def llama_detect_vram() -> Optional[int]:
+def llama_query_vram_usage() -> Optional[int]:
+    """Текущее использование VRAM (МБ) через счётчики Windows Performance."""
     try:
+        import llama_manager as lm
+        return lm.query_vram_usage_mb()
+    except Exception:
+        return None
+
+
+def llama_detect_vram(state: Optional["SessionState"] = None) -> Optional[int]:
+    """Возвращает объём VRAM (МБ). Приоритет: vram_override_mb > автодетекция."""
+    try:
+        if state is not None:
+            override = int(getattr(state, "vram_override_mb", 0) or 0)
+            if override > 0:
+                return override
         import llama_manager as lm
         return lm.detect_vram_mb()
     except Exception:
@@ -986,12 +1015,23 @@ def llama_detect_vram() -> Optional[int]:
 
 def llama_start(model_path: str, ctx: int = 8192, ngl: int = -1,
                 kv_value: str = "q8_0", vram_mb: Optional[int] = None,
-                lan_access: bool = False) -> dict:
+                lan_access: bool = False,
+                state: Optional["SessionState"] = None,
+                ctv: str = "") -> dict:
     """Запускает llama-server (ngl=-1 => автоподбор по VRAM).
-    lan_access=True открывает доступ с телефона (0.0.0.0) с токеном."""
+    lan_access=True открывает доступ с телефона (0.0.0.0) с токеном.
+    state передаётся для чтения vram_override_mb и kv_ctv.
+    ctv — отдельное квантование V-кеша (если пусто, берётся из state.kv_ctv)."""
     try:
         import llama_manager as lm
-        return lm.start_server(model_path, ctx, ngl, kv_value, vram_mb, lan_access)
+        effective_vram = vram_mb
+        if effective_vram is None and state is not None:
+            override = int(getattr(state, "vram_override_mb", 0) or 0)
+            if override > 0:
+                effective_vram = override
+        if not ctv and state is not None:
+            ctv = getattr(state, "kv_ctv", "") or ""
+        return lm.start_server(model_path, ctx, ngl, kv_value, effective_vram, lan_access, ctv=ctv)
     except Exception as e:
         return {"ok": False, "message": f"Ошибка: {e}", "status": {}}
 

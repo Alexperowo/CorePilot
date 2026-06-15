@@ -89,3 +89,7 @@ tools_gradle.py
 server_token.txt
 window_dump.xml
 field_test_beta1.txt
+_launch_gemma4.py
+_test_pipeline_alllocal.py
+_test_pipeline_gemma4.py
+utils/

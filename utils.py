@@ -99,7 +99,9 @@ class SessionState(BaseModel):
     comfy_url: str = 'http://127.0.0.1:8188'
     comfy_model: str = ''            # имя .safetensors чекпойнта в ComfyUI (опц.)
     image_provider: str = 'huggingface'   # облачный image-провайдер
-    image_cloud_model: str = ''      # модель облака (пусто = дефолт FLUX.1-schnell)
+    image_cloud_model: str = ''      # модель облака (пусто = дефолт провайдера)
+    forge_upscale: bool = True       # нейросетевой апскейл результата через Forge ESRGAN
+    forge_upscale_scale: int = 4     # масштаб апскейла: 2=1024px, 4=2048px (4K)
     model_image_prompt: str = ''
     image_prompt_threads: int = 6
     ui_max_iter: int = 10
@@ -122,6 +124,14 @@ class SessionState(BaseModel):
     # Выгрузка локальной модели из VRAM перед передачей хода следующему агенту.
     # Защищает 8 ГБ VRAM при разных локальных моделях на роль. По умолчанию вкл.
     vram_unload_between_agents: bool = True
+    # Ручное переопределение VRAM (МБ). 0 = автоопределение.
+    # Нужно для AMD-карт >4 ГБ: WMI занижает до 4 ГБ из-за 32-битного ограничения.
+    # Примеры: RX 6600 8 ГБ → 8192, RX 6800 XT 16 ГБ → 16384.
+    vram_override_mb: int = 0
+    # Квантование V-кеша KV (если пусто = совпадает с kv_value/ctk).
+    # Асимметрия K=q5_1 + V=iq4_nl: ~9% экономии VRAM при минимальных потерях.
+    # K отвечает за точность attention-scores (важнее), V — за точность значений (менее чувствителен).
+    kv_ctv: str = ""
     # Полный MD5-хэш финалистов в поиске дубликатов (надёжнее, чуть медленнее).
     dup_full_hash: bool = True
     # Карантин очистки создаётся на том же диске, что и источник (мгновенный rename).

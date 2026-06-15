@@ -167,16 +167,59 @@ def select_kv_cache() -> tuple[str, bool]:
 
 
 # --- Оценка VRAM и -ngl -------------------------------------------------------
-def detect_vram_mb() -> int | None:
-    """Пытается определить объём видеопамяти (МБ). Сначала wmic (быстро),
-    при неудаче - PowerShell Get-CimInstance (wmic удалён в свежих Win11).
-    Возвращает None, если не удалось.
+_VRAM_CACHE: "int | None" = None  # кеш — dxdiag медленный, вызываем один раз
 
-    ВНИМАНИЕ: AdapterRAM в WMI - 32-битное значение и для карт >4 ГБ занижается
-    до ~4 ГБ. Для RX 6600 (8 ГБ) вернёт ~4 ГБ; пользователь может ввести точный
-    лимит вручную в select_ngl."""
+
+def detect_vram_mb() -> "int | None":
+    """Определяет объём видеопамяти (МБ). Результат кешируется на сессию.
+
+    Порядок попыток:
+    1. Реестр Windows — 64-битное HardwareInformation.MemorySize (точно для NVIDIA).
+    2. WMI AdapterRAM — быстро, но у AMD RX 5xxx/6xxx/7xxx возвращает ровно 4 ГБ
+       из-за 32-битного поля. Если значение ≤ 4100 МБ — подозрительно, идём дальше.
+    3. dxdiag /t — единственный надёжный способ для AMD >4 ГБ на Windows.
+       Медленный (~8 с), но вызывается один раз и кешируется.
+    """
+    global _VRAM_CACHE
+    if _VRAM_CACHE is not None:
+        return _VRAM_CACHE
+
+    result = _detect_vram_uncached()
+    _VRAM_CACHE = result
+    return result
+
+
+def _detect_vram_uncached() -> "int | None":
     if os.name != "nt":
         return None
+
+    # 1) Реестр: Display adapter class {4d36e968-…}
+    reg_result: "int | None" = None
+    try:
+        import winreg
+        base = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+        best = 0
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, base) as hbase:
+            i = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(hbase, i)
+                    i += 1
+                    if not sub.isdigit():
+                        continue
+                    try:
+                        with winreg.OpenKey(hbase, sub) as hk:
+                            val, _ = winreg.QueryValueEx(hk, "HardwareInformation.MemorySize")
+                            if isinstance(val, int) and val > 0:
+                                best = max(best, val // (1024 * 1024))
+                    except OSError:
+                        pass
+                except OSError:
+                    break
+        if best:
+            reg_result = best
+    except Exception:
+        pass
 
     def _parse_bytes(text: str) -> int:
         best = 0
@@ -186,45 +229,130 @@ def detect_vram_mb() -> int | None:
                 best = max(best, int(line) // (1024 * 1024))
         return best
 
-    # 1) wmic (есть в Win10 и части Win11)
+    # 2) wmic — 32-битное, занижает AMD-карты >4 ГБ
+    wmi_result: "int | None" = None
     try:
         out = subprocess.run(
             ["wmic", "path", "win32_VideoController", "get", "AdapterRAM"],
             capture_output=True, text=True, timeout=10,
         ).stdout
         if (mb := _parse_bytes(out)):
-            return mb
+            wmi_result = mb
     except Exception:
         pass
 
-    # 2) PowerShell — на случай отсутствия wmic
+    if not wmi_result:
+        try:
+            ps = ("Get-CimInstance Win32_VideoController | "
+                  "Select-Object -ExpandProperty AdapterRAM")
+            out = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps],
+                capture_output=True, text=True, timeout=15,
+            ).stdout
+            if (mb := _parse_bytes(out)):
+                wmi_result = mb
+        except Exception:
+            pass
+
+    # Если оба метода дали >4100 МБ — доверяем (NVIDIA/Intel), возвращаем.
+    fast_result = reg_result or wmi_result
+    if fast_result and fast_result > 4100:
+        return fast_result
+
+    # 3) dxdiag: единственно надёжный путь для AMD >4 ГБ.
+    # Парсим строку "Dedicated Memory: XXXX MB" из текстового отчёта.
     try:
-        ps = ("Get-CimInstance Win32_VideoController | "
-              "Select-Object -ExpandProperty AdapterRAM")
+        import re, tempfile
+        tmp = os.path.join(tempfile.gettempdir(), "corepilot_dxdiag.txt")
+        subprocess.run(["dxdiag", "/t", tmp], capture_output=True, timeout=20)
+        if os.path.exists(tmp):
+            text = open(tmp, encoding="utf-8", errors="ignore").read()
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            m = re.search(r"Dedicated Memory:\s*(\d+)\s*MB", text)
+            if m:
+                val = int(m.group(1))
+                if val > 0:
+                    return val
+    except Exception:
+        pass
+
+    return fast_result  # последний шанс — возможно заниженное WMI-значение
+
+
+def query_vram_usage_mb() -> "int | None":
+    """Текущее использование VRAM (МБ) через счётчики Windows Performance.
+    Работает для AMD и NVIDIA. Возвращает None если счётчики недоступны."""
+    if os.name != "nt":
+        return None
+    try:
+        ps = (
+            "try { $s=(Get-Counter '\\GPU Adapter Memory(*)\\Dedicated Usage'"
+            " -ErrorAction Stop -MaxSamples 1).CounterSamples |"
+            " Where-Object {$_.CookedValue -gt 0} |"
+            " Measure-Object -Property CookedValue -Maximum;"
+            " [math]::Round($s.Maximum/1MB) } catch { 0 }"
+        )
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps],
-            capture_output=True, text=True, timeout=15,
-        ).stdout
-        if (mb := _parse_bytes(out)):
-            return mb
+            capture_output=True, text=True, timeout=8,
+        ).stdout.strip()
+        val = int(out) if out.isdigit() else 0
+        return val if val > 0 else None
     except Exception:
-        pass
+        return None
 
+
+def find_gguf_path(name: str) -> "Path | None":
+    """Ищет .gguf-файл по имени (basename) в стандартных директориях.
+    Нужно для жонглирования моделями: state хранит имя файла, не полный путь."""
+    search_dirs: list[Path] = [Path(DEFAULT_MODELS)]
+    for drive in ("D:/", "C:/", "E:/"):
+        for sub in ("models", "models/Local", "LLM", "GGUF"):
+            p = Path(drive) / sub
+            if p.is_dir():
+                search_dirs.append(p)
+    seen: set[Path] = set()
+    for base in search_dirs:
+        if base in seen or not base.is_dir():
+            continue
+        seen.add(base)
+        for found in base.rglob(name):
+            if found.is_file():
+                return found
     return None
 
 
-def suggest_ngl(model_path: Path, ctx: int, kv_value: str, vram_mb: int) -> int:
+def _kv_factor(quant: str) -> float:
+    """Коэффициент сжатия KV-кеша относительно f16 (1.0 = без сжатия)."""
+    if quant == "f16":   return 1.0
+    if quant == "q8_0":  return 0.50
+    if quant == "q5_1":  return 0.34
+    if quant == "q5_0":  return 0.31
+    if quant in ("q4_1", "iq4_nl"): return 0.27
+    if quant == "q4_0":  return 0.25
+    return 0.30  # неизвестный тип — консервативная оценка
+
+
+def suggest_ngl(model_path: Path, ctx: int, kv_value: str, vram_mb: int,
+                ctv: str = "") -> int:
     """Грубая эвристика числа слоёв на GPU (-ngl) под доступную VRAM.
 
     Модель полностью на GPU = -ngl 99. Если не влезает - оцениваем долю.
     Это ПРЕДЛОЖЕНИЕ; пользователь подтверждает или вводит своё.
+    ctv — квантование V-кеша (если отличается от kv_value/ctk).
+    Асимметрия K=q5_1 + V=iq4_nl экономит ~9% VRAM по сравнению с q5_1+q5_1.
     """
     model_mb = model_path.stat().st_size / (1024 * 1024)
 
-    # Запас под KV-кэш и накладные расходы. f16 - самый тяжёлый кэш.
-    kv_factor = 1.0 if kv_value == "f16" else (0.5 if kv_value == "q8_0" else 0.3)
-    # Очень грубая оценка кэша: ~0.5 МБ на токен контекста при f16 для 7-8B.
-    kv_mb = ctx * 0.5 * kv_factor
+    # Запас под KV-кэш и накладные расходы.
+    # При асимметричном KV усредняем факторы K и V.
+    ctv_val = ctv if ctv else kv_value
+    avg_factor = (_kv_factor(kv_value) + _kv_factor(ctv_val)) / 2
+    # Грубая оценка: ~0.5 МБ на токен контекста при f16.
+    kv_mb = ctx * 0.5 * avg_factor
     overhead_mb = 600  # буферы, компиляция шейдеров и т.п.
 
     needed_full = model_mb + kv_mb + overhead_mb
@@ -234,8 +362,20 @@ def suggest_ngl(model_path: Path, ctx: int, kv_value: str, vram_mb: int) -> int:
     # Доля модели, которую можно разместить (оставляя место под кэш+оверхед).
     usable = max(0, vram_mb - kv_mb - overhead_mb)
     frac = max(0.0, min(1.0, usable / model_mb)) if model_mb > 0 else 0.0
-    # Предполагаем ~32 слоя у типовой 7-8B; пользователь скорректирует при иной.
-    approx_layers = 32
+    # Оценка числа слоёв по размеру модели (при ~4.5 бит/вес в среднем).
+    params_b = (model_mb * 1024 * 1024 * 8) / (4.5 * 1e9)
+    if params_b < 4:
+        approx_layers = 18
+    elif params_b < 10:
+        approx_layers = 32
+    elif params_b < 20:
+        approx_layers = 42
+    elif params_b < 40:
+        approx_layers = 62
+    elif params_b < 80:
+        approx_layers = 80
+    else:
+        approx_layers = 96
     ngl = int(approx_layers * frac)
     return max(0, ngl)
 
@@ -268,11 +408,19 @@ def select_ngl(model_path: Path, ctx: int, kv_value: str) -> int:
 # --- Сборка и запуск ----------------------------------------------------------
 def build_command(server: str, model: Path, ctx: int, ngl: int,
                   kv_value: str, needs_fa: bool, host: str = HOST,
-                  api_key: str = "", no_mmap: bool = True) -> list[str]:
+                  api_key: str = "", no_mmap: bool = True,
+                  ctv: str = "") -> list[str]:
+    """ctv — отдельное квантование для V-кеша (если отличается от kv_value/ctk).
+    Асимметрия K+V: ctk=q5_1, ctv=iq4_nl даёт ~9% экономии VRAM при минимальных
+    потерях качества (K важнее для точности attention, V менее чувствителен)."""
     cmd = [server, "-m", str(model), "--host", host, "--port", str(PORT),
            "-c", str(ctx), "-ngl", str(ngl)]
-    if kv_value != "f16":
-        cmd += ["-ctk", kv_value, "-ctv", kv_value]
+    ctk = kv_value
+    ctv_val = ctv if ctv else kv_value
+    if ctk != "f16":
+        cmd += ["-ctk", ctk]
+    if ctv_val != "f16":
+        cmd += ["-ctv", ctv_val]
     if needs_fa:
         cmd += ["-fa", "on"]   # в актуальном llama-server: on|off|auto (не 1/0)
     # --no-mmap: НЕ отображать файл модели в RAM. По умолчанию llama.cpp держит
@@ -332,10 +480,11 @@ def server_status() -> dict:
 
 def start_server(model_path: str, ctx: int = 4096, ngl: int = 99,
                  kv_value: str = "q8_0", vram_mb: Optional[int] = None,
-                 lan_access: bool = False) -> dict:
+                 lan_access: bool = False, ctv: str = "") -> dict:
     """Запускает llama-server как фоновый процесс (без интерактива).
     Возвращает {ok, message, status}. Если vram_mb задан и ngl<0 — подберёт сам.
-    lan_access=True биндит 0.0.0.0 (доступ с телефона) — только с токеном."""
+    lan_access=True биндит 0.0.0.0 (доступ с телефона) — только с токеном.
+    ctv — отдельное квантование V-кеша (если пусто = совпадает с kv_value/ctk)."""
     global _SERVER_PROC, _SERVER_INFO
     if _SERVER_PROC is not None and _SERVER_PROC.poll() is None:
         return {"ok": False, "message": "Сервер уже запущен. Остановите перед перезапуском.",
@@ -361,14 +510,15 @@ def start_server(model_path: str, ctx: int = 4096, ngl: int = 99,
     # Автоподбор -ngl, если запрошено (ngl < 0) и известен объём VRAM.
     if ngl < 0:
         vram = vram_mb or detect_vram_mb() or 0
-        ngl = suggest_ngl(mp, ctx, kv_value, vram) if vram else 99
+        ngl = suggest_ngl(mp, ctx, kv_value, vram, ctv=ctv) if vram else 99
 
-    needs_fa = kv_value in _QUANTIZED_KV
+    ctv_val = ctv if ctv else kv_value
+    needs_fa = kv_value in _QUANTIZED_KV or ctv_val in _QUANTIZED_KV
     # Безопасность: токен обязателен всегда. Доступ с телефона (LAN) —
     # биндинг 0.0.0.0 ТОЛЬКО вместе с токеном, иначе остаёмся на localhost.
     token = get_or_create_token()
     host = "0.0.0.0" if lan_access else HOST
-    cmd = build_command(server, mp, ctx, ngl, kv_value, needs_fa, host=host, api_key=token)
+    cmd = build_command(server, mp, ctx, ngl, kv_value, needs_fa, host=host, api_key=token, ctv=ctv)
     try:
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
         _SERVER_PROC = subprocess.Popen(
@@ -379,11 +529,12 @@ def start_server(model_path: str, ctx: int = 4096, ngl: int = 99,
         _SERVER_PROC = None
         return {"ok": False, "message": f"Не удалось запустить: {e}", "status": server_status()}
 
-    _SERVER_INFO = {"model": mp.name, "ctx": ctx, "ngl": ngl, "kv": kv_value,
-                    "host": host, "lan": lan_access}
+    _SERVER_INFO = {"model": mp.name, "model_path": str(mp), "ctx": ctx,
+                    "ngl": ngl, "kv": kv_value, "ctv": ctv, "host": host, "lan": lan_access}
+    kv_desc = f"{kv_value}+{ctv}" if ctv and ctv != kv_value else kv_value
     note = " (доступ с телефона: токен в настройках)" if lan_access else ""
     return {"ok": True,
-            "message": f"Сервер запущен: {mp.name} (ctx={ctx}, ngl={ngl}, kv={kv_value}){note}.",
+            "message": f"Сервер запущен: {mp.name} (ctx={ctx}, ngl={ngl}, kv={kv_desc}){note}.",
             "status": server_status(), "command": " ".join(cmd)}
 
 
@@ -403,6 +554,42 @@ def stop_server() -> dict:
         return {"ok": False, "message": f"Ошибка остановки: {e}", "status": server_status()}
     _SERVER_PROC = None
     return {"ok": True, "message": "Сервер остановлен.", "status": server_status()}
+
+
+def restart_for_model(new_model_name: str, vram_mb: Optional[int] = None) -> dict:
+    """Жонглирование для llamacpp: останавливает текущий сервер и запускает новый
+    с моделью new_model_name. Контекст и kv берёт из последнего _SERVER_INFO.
+    Нужен при смене модели между агентами (разные модели на разные роли).
+    Если модели одинаковы — no-op.
+
+    new_model_name — имя файла .gguf (как хранится в state.model_{role}).
+    Полный путь ищется через find_gguf_path(). Если не найден — возвращает ошибку."""
+    current = _SERVER_INFO.get("model", "")
+    if current and (current == new_model_name or current.startswith(new_model_name)):
+        return {"ok": True, "message": f"Модель '{new_model_name}' уже загружена, перезапуск не нужен.",
+                "status": server_status()}
+
+    # Найти полный путь к новой модели
+    new_path = find_gguf_path(new_model_name)
+    if new_path is None:
+        return {"ok": False, "message": f"Файл модели '{new_model_name}' не найден ни в одной из директорий.",
+                "status": server_status()}
+
+    # Параметры сервера берём из предыдущего запуска
+    ctx = _SERVER_INFO.get("ctx", 4096)
+    kv = _SERVER_INFO.get("kv", "q8_0")
+    ctv = _SERVER_INFO.get("ctv", "")
+    lan = _SERVER_INFO.get("lan", False)
+
+    stop_server()
+
+    # Небольшая пауза — Windows может не сразу освободить порт
+    import time as _t
+    _t.sleep(1.5)
+
+    ngl = -1  # автоподбор с учётом нового размера модели
+    return start_server(str(new_path), ctx=ctx, ngl=ngl, kv_value=kv,
+                        vram_mb=vram_mb, lan_access=lan, ctv=ctv)
 
 
 def main() -> int:

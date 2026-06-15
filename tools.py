@@ -276,17 +276,88 @@ def generate_image(user_request: str) -> str:
     return forge_result
 
 
+_FORGE_NEG = (
+    "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, "
+    "fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, "
+    "signature, watermark, username, blurry, deformed"
+)
+
+def _upscale_via_forge(forge_url: str, image_bytes: bytes, scale: int = 4) -> bytes:
+    """Нейросетевой апскейл через Forge R-ESRGAN 4x+.
+    scale=4 → 512→2048px (4K-ready). Возвращает оригинал при ошибке."""
+    import base64, requests
+    try:
+        payload = {
+            "resize_mode": 0,
+            "upscaling_resize": scale,
+            "upscaler_1": "R-ESRGAN 4x+",
+            "image": base64.b64encode(image_bytes).decode(),
+        }
+        r = requests.post(f"{forge_url}/sdapi/v1/extra-single-image", json=payload, timeout=180)
+        if r.status_code == 200:
+            b64 = r.json().get("image", "")
+            if b64:
+                return base64.b64decode(b64)
+    except Exception:
+        pass
+    return image_bytes  # фолбэк: оригинал без апскейла
+
+
+def _upscale_via_replicate(image_bytes: bytes, key: str, scale: int = 4) -> bytes:
+    """Облачный нейросетевой апскейл через Replicate (Real-ESRGAN).
+    Используется если Forge недоступен и есть ключ REPLICATE_API_KEY."""
+    import base64, requests, time
+    try:
+        b64 = "data:image/png;base64," + base64.b64encode(image_bytes).decode()
+        pred = requests.post(
+            "https://api.replicate.com/v1/predictions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"version": "nightmareai/real-esrgan:42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",
+                  "input": {"image": b64, "scale": scale, "face_enhance": False}},
+            timeout=30,
+        )
+        if pred.status_code not in (200, 201):
+            return image_bytes
+        pred_id = pred.json().get("id", "")
+        if not pred_id:
+            return image_bytes
+        for _ in range(120):
+            time.sleep(2)
+            r = requests.get(f"https://api.replicate.com/v1/predictions/{pred_id}",
+                             headers={"Authorization": f"Bearer {key}"}, timeout=15)
+            data = r.json()
+            if data.get("status") == "succeeded":
+                out_url = data.get("output", "")
+                if out_url:
+                    img_r = requests.get(out_url, timeout=60)
+                    if img_r.ok:
+                        return img_r.content
+                break
+            if data.get("status") in ("failed", "canceled"):
+                break
+    except Exception:
+        pass
+    return image_bytes
+
+
 def _generate_image_forge(state, user_request: str) -> str:
     """Локальная генерация через SD Forge / AUTOMATIC1111 (txt2img API)."""
     import base64
     import requests
     forge_url = (getattr(state, "forge_url", "") or "http://127.0.0.1:7860").rstrip("/")
     model = (getattr(state, "forge_model", "") or "").strip()
+    upscale = getattr(state, "forge_upscale", True)
+    upscale_scale = int(getattr(state, "forge_upscale_scale", 4))
 
     payload = {
         "prompt": user_request,
-        "steps": 25, "width": 512, "height": 512,
-        "cfg_scale": 7, "sampler_name": "DPM++ 2M",
+        "negative_prompt": _FORGE_NEG,
+        "steps": 20,
+        "width": 512,
+        "height": 512,
+        "cfg_scale": 6,
+        "sampler_name": "DPM++ 2M",
+        "scheduler": "karras",
     }
     if model:
         payload["override_settings"] = {"sd_model_checkpoint": model}
@@ -306,31 +377,40 @@ def _generate_image_forge(state, user_request: str) -> str:
         images = resp.json().get("images", [])
         if not images:
             return "❌ SD Forge не вернул изображений."
-        return _save_image_bytes(state, base64.b64decode(images[0].split(",", 1)[-1]), "sd")
+        raw = base64.b64decode(images[0].split(",", 1)[-1])
+        if upscale:
+            raw = _upscale_via_forge(forge_url, raw, scale=upscale_scale)
+        return _save_image_bytes(state, raw, "sd")
     except Exception as e:
         return f"❌ Не удалось сохранить изображение: {e}"
 
 
+_COMFY_NEG = (
+    "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, "
+    "fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, "
+    "signature, watermark, username, blurry, deformed"
+)
+_COMFY_DEFAULT_CKPT = "juggernautXL_ragnarokBy.safetensors"
+
 def _generate_image_comfy(state, user_request: str) -> str:
     """Локальная генерация через ComfyUI API. ComfyUI работает по схеме:
     POST воркфлоу на /prompt -> опрос /history/{id} до готовности -> картинка с /view.
-    Используем минимальный txt2img-граф (checkpoint -> CLIP -> KSampler -> VAE -> Save)."""
+    Используем SDXL-совместимый граф (checkpoint -> CLIP -> KSampler -> VAE -> Save)."""
     import requests
     comfy_url = (getattr(state, "comfy_url", "") or "http://127.0.0.1:8188").rstrip("/")
-    ckpt = (getattr(state, "comfy_model", "") or "").strip()  # имя .safetensors, опц.
+    ckpt = (getattr(state, "comfy_model", "") or "").strip()
 
-    # Минимальный воркфлоу в API-формате ComfyUI.
     seed = int(time.time()) % 2_000_000_000
     wf = {
         "3": {"class_type": "KSampler", "inputs": {
-            "seed": seed, "steps": 20, "cfg": 7.0, "sampler_name": "euler",
-            "scheduler": "normal", "denoise": 1.0,
+            "seed": seed, "steps": 20, "cfg": 6.0, "sampler_name": "dpmpp_2m",
+            "scheduler": "karras", "denoise": 1.0,
             "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}},
         "4": {"class_type": "CheckpointLoaderSimple",
-              "inputs": {"ckpt_name": ckpt or "v1-5-pruned-emaonly.safetensors"}},
-        "5": {"class_type": "EmptyLatentImage", "inputs": {"width": 512, "height": 512, "batch_size": 1}},
+              "inputs": {"ckpt_name": ckpt or _COMFY_DEFAULT_CKPT}},
+        "5": {"class_type": "EmptyLatentImage", "inputs": {"width": 640, "height": 640, "batch_size": 1}},
         "6": {"class_type": "CLIPTextEncode", "inputs": {"text": user_request, "clip": ["4", 1]}},
-        "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "lowres, bad anatomy, blurry", "clip": ["4", 1]}},
+        "7": {"class_type": "CLIPTextEncode", "inputs": {"text": _COMFY_NEG, "clip": ["4", 1]}},
         "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
         "9": {"class_type": "SaveImage", "inputs": {"filename_prefix": "CorePilot", "images": ["8", 0]}},
     }
@@ -348,8 +428,11 @@ def _generate_image_comfy(state, user_request: str) -> str:
         prompt_id = r.json().get("prompt_id", "")
         if not prompt_id:
             return "❌ ComfyUI не вернул prompt_id."
-        # Опрос истории до готовности (ComfyUI генерирует асинхронно).
-        for _ in range(120):  # до ~2 минут
+        # Опрос истории до готовности (ComfyUI генерирует асинхронно, SDXL 640px ~5 минут).
+        forge_url = (getattr(state, "forge_url", "") or "http://127.0.0.1:7860").rstrip("/")
+        upscale = getattr(state, "forge_upscale", True)
+        upscale_scale = int(getattr(state, "forge_upscale_scale", 4))
+        for _ in range(330):
             time.sleep(1)
             h = requests.get(f"{comfy_url}/history/{prompt_id}", timeout=10)
             if not h.ok:
@@ -362,18 +445,50 @@ def _generate_image_comfy(state, user_request: str) -> str:
                               "type": img.get("type", "output")}
                     iv = requests.get(f"{comfy_url}/view", params=params, timeout=30)
                     if iv.ok:
-                        return _save_image_bytes(state, iv.content, "comfy")
+                        raw = iv.content
+                        if upscale:
+                            raw = _upscale_via_forge(forge_url, raw, scale=upscale_scale)
+                        return _save_image_bytes(state, raw, "comfy")
         return "⚠️ ComfyUI не вернул изображение за отведённое время (модель загружается?)."
     except Exception as e:
         return f"❌ Ошибка получения результата ComfyUI: {e}"
 
 
-# Облачные провайдеры генерации изображений (бесплатные тарифы). Имя ключа —
-# то же, что у текстовых (например, huggingface), плюс синонимы из init_api_keys.
-_IMAGE_CLOUD = {
+# Реестр облачных провайдеров генерации изображений.
+# api: "hf" | "openai_compat" | "stability"
+# Ключи берутся из общего API_KEYS (secrets.toml), те же что для текстовых моделей.
+_IMAGE_CLOUD: dict = {
     "huggingface": {
-        "url_tmpl": "https://api-inference.huggingface.co/models/{model}",
+        "api": "hf",
+        "url": "https://api-inference.huggingface.co/models/{model}",
         "default_model": "black-forest-labs/FLUX.1-schnell",
+    },
+    "openai": {
+        "api": "openai_compat",
+        "url": "https://api.openai.com/v1/images/generations",
+        "default_model": "dall-e-3",
+        "size": "1024x1024",
+    },
+    "together": {
+        "api": "openai_compat",
+        "url": "https://api.together.xyz/v1/images/generations",
+        "default_model": "black-forest-labs/FLUX.1-schnell-Free",
+        "width": 1024,
+        "height": 1024,
+    },
+    "stability": {
+        "api": "stability",
+        "url": "https://api.stability.ai/v2beta/stable-image/generate/core",
+        "default_model": "sd3-medium",
+    },
+}
+
+# Облачные провайдеры нейросетевого апскейла (когда Forge недоступен).
+_UPSCALE_CLOUD: dict = {
+    "replicate": {
+        "api": "replicate",
+        # nightmareai/real-esrgan pinned version
+        "version": "42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",
     },
 }
 
@@ -388,44 +503,98 @@ def _has_image_cloud_key(state) -> bool:
         return False
 
 
+def _call_image_api(provider: str, meta: dict, key: str, model: str,
+                    prompt: str) -> tuple[bytes | None, str]:
+    """Вызов API одного провайдера. Возвращает (bytes, "") при успехе или (None, err)."""
+    import requests
+    api = meta["api"]
+    try:
+        if api == "hf":
+            url = meta["url"].format(model=model)
+            r = requests.post(url, json={"inputs": prompt},
+                              headers={"Authorization": f"Bearer {key}", "Accept": "image/png"},
+                              timeout=300)
+            if r.status_code == 200 and r.headers.get("Content-Type", "").startswith("image/"):
+                return r.content, ""
+            if r.status_code == 503:
+                return None, "503_loading"
+            return None, f"HTTP {r.status_code}: {r.text[:200]}"
+
+        elif api == "openai_compat":
+            body: dict = {"model": model, "prompt": prompt, "n": 1, "response_format": "b64_json"}
+            if "size" in meta:
+                body["size"] = meta["size"]
+            if "width" in meta:
+                body["width"] = meta["width"]
+                body["height"] = meta["height"]
+            r = requests.post(meta["url"], json=body,
+                              headers={"Authorization": f"Bearer {key}"},
+                              timeout=300)
+            if r.status_code == 200:
+                b64 = (r.json().get("data") or [{}])[0].get("b64_json", "")
+                if b64:
+                    import base64
+                    return base64.b64decode(b64), ""
+            return None, f"HTTP {r.status_code}: {r.text[:200]}"
+
+        elif api == "stability":
+            import base64
+            r = requests.post(meta["url"],
+                              headers={"Authorization": f"Bearer {key}", "Accept": "image/*"},
+                              data={"output_format": "png", "prompt": prompt},
+                              timeout=300)
+            if r.status_code == 200 and r.headers.get("Content-Type", "").startswith("image/"):
+                return r.content, ""
+            return None, f"HTTP {r.status_code}: {r.text[:200]}"
+
+    except Exception as e:
+        return None, str(e)[:200]
+
+    return None, "неизвестный api тип"
+
+
 def _generate_image_cloud(state, user_request: str) -> str:
-    """Облачная генерация (по умолчанию HuggingFace Inference API) с ротацией ключей.
-    HF отдаёт бинарный PNG/JPEG. Ключи берутся из общего хранилища (secrets.toml)."""
+    """Облачная генерация изображений. Провайдер выбирается настройкой image_provider.
+    Поддерживаются: huggingface, openai, together, stability.
+    Ключи берутся из общего хранилища secrets.toml."""
     import agents
     provider = (getattr(state, "image_provider", "") or "huggingface").strip().lower()
     meta = _IMAGE_CLOUD.get(provider)
     if not meta:
-        return f"❌ Неизвестный облачный image-провайдер: {provider}."
+        available = ", ".join(_IMAGE_CLOUD.keys())
+        return f"❌ Неизвестный провайдер изображений: '{provider}'. Доступные: {available}."
     model = (getattr(state, "image_cloud_model", "") or meta["default_model"]).strip()
-    url = meta["url_tmpl"].format(model=model)
 
-    agents.peek_api_key(provider)  # trigger lazy load of API_KEYS
+    agents.peek_api_key(provider)  # инициализировать lazy load
     keys = list(agents.API_KEYS.get(provider, []))
     if not keys:
-        return (f"⚠️ Нет ключа для облачной генерации ({provider}). Добавьте его в "
-                f"secrets.toml (например, HF_TOKEN) или выберите источник 'forge'.")
+        return (f"⚠️ Нет ключа для '{provider}'. Добавьте в secrets.toml "
+                f"(например, TOGETHER_API_KEY, OPENAI_API_KEY) или выберите источник 'forge'.")
 
-    import requests
     last_err = ""
-    for key in keys:  # ротация: при исчерпании ключа пробуем следующий
-        try:
-            resp = requests.post(url, json={"inputs": user_request},
-                                 headers={"Authorization": f"Bearer {key}",
-                                          "Accept": "image/png"}, timeout=300)
-        except Exception as e:
-            last_err = str(e)[:200]
-            continue
-        if resp.status_code == 200 and resp.headers.get("Content-Type", "").startswith("image/"):
-            return _save_image_bytes(state, resp.content, "cloud")
-        if resp.status_code in (429, 401, 403, 402):
-            last_err = f"HTTP {resp.status_code} (ключ исчерпан/не годен)"
-            continue  # следующий ключ
-        if resp.status_code == 503:
-            return ("⚠️ Облачная модель загружается (HTTP 503). Подождите минуту и повторите.")
-        last_err = f"HTTP {resp.status_code}: {resp.text[:200]}"
+    for key in keys:
+        raw, err = _call_image_api(provider, meta, key, model, user_request)
+        if raw:
+            forge_url = (getattr(state, "forge_url", "") or "http://127.0.0.1:7860").rstrip("/")
+            upscale_scale = int(getattr(state, "forge_upscale_scale", 4))
+            if getattr(state, "forge_upscale", True):
+                upscaled = _upscale_via_forge(forge_url, raw, scale=upscale_scale)
+                if upscaled is raw:  # Forge недоступен — пробуем Replicate
+                    import agents as _ag
+                    rep_key = _ag.peek_api_key("replicate")
+                    if rep_key:
+                        upscaled = _upscale_via_replicate(raw, rep_key, scale=upscale_scale)
+                raw = upscaled
+            return _save_image_bytes(state, raw, "cloud")
+        if err == "503_loading":
+            return "⚠️ Облачная модель загружается (HTTP 503). Подождите минуту и повторите."
+        if "401" in err or "403" in err or "402" in err or "429" in err:
+            last_err = err
+            continue  # ротация ключей
+        last_err = err
         break
 
-    return f"❌ Облачная генерация не удалась ({provider}): {last_err}"
+    return f"❌ Облачная генерация не удалась ({provider}/{model}): {last_err}"
 
 
 def _save_image_bytes(state, raw: bytes, prefix: str) -> str:

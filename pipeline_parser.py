@@ -130,9 +130,19 @@ def parse_fixer_output(raw: str) -> FixerOutput:
     return FixerOutput(is_structured=False)
 
 def parse_auditor_verdict(raw: str) -> AuditResult:
-    ok = "вердикт: ок" in raw.lower()
-    reasons = [l.strip() for l in raw.splitlines() if l.strip() and (l.lower().startswith("причина") or l.startswith("- "))] if not ok else []
-    return AuditResult(verdict_ok=ok, raw_text=raw, reasons=reasons)
+    # Стрипаем <think>...</think> для чистого отображения.
+    # НО ищем вердикт в ПОЛНОМ тексте (включая thinking): reasoning-модели часто
+    # пишут "Вердикт: ОК" внутри <think>, не после него.
+    try:
+        from utils import extract_agent_reasoning
+        clean, _ = extract_agent_reasoning(raw)
+    except Exception:
+        clean = raw
+    search_text = (clean + "\n" + raw).lower()
+    ok = "вердикт: ок" in search_text
+    display = clean if clean else raw
+    reasons = [l.strip() for l in display.splitlines() if l.strip() and (l.lower().startswith("причина") or l.startswith("- "))] if not ok else []
+    return AuditResult(verdict_ok=ok, raw_text=display, reasons=reasons)
 
 def fixer_output_to_patch_models(output: FixerOutput):
     from utils import PatchModel

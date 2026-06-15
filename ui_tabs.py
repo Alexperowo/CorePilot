@@ -1115,8 +1115,10 @@ class SettingsTab:
 # ===========================================================================
 
 class LlamaTab:
-    """Запуск/останов llama-server: выбор GGUF-модели, контекст, KV-кэш, -ngl
-    (с автоподбором по VRAM). Живой статус сервера."""
+    """Запуск/останов llama-server: выбор GGUF-модели, контекст, KV-кэш K+V, -ngl
+    (с автоподбором по VRAM), асимметричный KV и override VRAM для AMD."""
+
+    _CTV_AUTO = "(= K)"  # спец-значение: V-кэш совпадает с K-кэшем
 
     def __init__(self, runner: BackgroundRunner, notify):
         self._runner = runner
@@ -1139,13 +1141,28 @@ class LlamaTab:
             with dpg.group(horizontal=True):
                 dpg.add_text("Контекст:")
                 dpg.add_slider_int(tag="llama_ctx", default_value=4096, min_value=512,
-                                   max_value=131072, width=300)
-                dpg.add_text("KV-кэш:")
-                dpg.add_combo([], tag="llama_kv", width=120, default_value="q8_0")
+                                   max_value=131072, width=260)
+                dpg.add_text("KV K:")
+                dpg.add_combo([], tag="llama_kv", width=110, default_value="q8_0")
+                dpg.add_text("V:")
+                dpg.add_combo([], tag="llama_ctv", width=110, default_value=self._CTV_AUTO)
+            dpg.add_text(
+                "KV K — ключи attention (важнее, берите q5_1+).  "
+                "V — значения (менее чувствителен: iq4_nl даёт ~9% экономии VRAM).  "
+                f"«{self._CTV_AUTO}» = V совпадает с K (симметрично).",
+                color=(140, 140, 150), wrap=900)
             with dpg.group(horizontal=True):
                 dpg.add_text("Слои на GPU (-ngl, -1 = авто по VRAM):")
                 dpg.add_slider_int(tag="llama_ngl", default_value=-1, min_value=-1,
-                                   max_value=999, width=250)
+                                   max_value=999, width=210)
+                dpg.add_text("  VRAM лимит МБ (0 = авто):")
+                dpg.add_input_int(tag="llama_vram_override", default_value=0,
+                                  min_value=0, max_value=65536, width=120,
+                                  step=256, step_fast=1024)
+            dpg.add_text(
+                "VRAM лимит: 0 = автоопределение. "
+                "AMD RX 5xxx/6xxx/7xxx — WMI занижает до 4 ГБ; введите реальный объём (8192, 16384…).",
+                color=(140, 140, 150), wrap=900)
             dpg.add_separator()
             with dpg.group(horizontal=True):
                 dpg.add_checkbox(label="Доступ с телефона (LAN)", tag="llama_lan",
@@ -1173,9 +1190,25 @@ class LlamaTab:
                            default_value=names[0] if names else "")
         kv_vals = [k["value"] for k in self._kv] or ["q8_0"]
         dpg.configure_item("llama_kv", items=kv_vals, default_value="q8_0")
+        # V-кэш: первый вариант — "(= K)" (симметрично), затем все те же опции
+        ctv_items = [self._CTV_AUTO] + kv_vals
+        dpg.configure_item("llama_ctv", items=ctv_items, default_value=self._CTV_AUTO)
+        # VRAM: показываем обнаруженное значение; подсказываем override из сессии
         vram = svc.llama_detect_vram()
         dpg.set_value("llama_vram_text",
                       f"VRAM: ~{vram} МБ" if vram else "VRAM: не определена (введите -ngl вручную)")
+        # Предзаполняем из сессии: VRAM override и V-кэш (kv_ctv)
+        try:
+            st = svc.load_current_session()
+            if st is not None:
+                override = int(getattr(st, "vram_override_mb", 0) or 0)
+                if override > 0:
+                    dpg.set_value("llama_vram_override", override)
+                ctv_sess = getattr(st, "kv_ctv", "") or ""
+                if ctv_sess and ctv_sess in kv_vals:
+                    dpg.set_value("llama_ctv", ctv_sess)
+        except Exception:
+            pass
         self._update_status(svc.llama_status())
 
     def _model_path(self, name: str) -> str:
@@ -1192,10 +1225,15 @@ class LlamaTab:
             return
         if self._runner.is_busy("llama_start"):
             return
+        ctv_raw = dpg.get_value("llama_ctv")
+        ctv = "" if ctv_raw == self._CTV_AUTO else ctv_raw
+        vram_raw = int(dpg.get_value("llama_vram_override") or 0)
+        vram_mb = vram_raw if vram_raw > 0 else None
         dpg.configure_item("llama_spinner", show=True)
         self._runner.run("llama_start", svc.llama_start, path,
                          int(dpg.get_value("llama_ctx")), int(dpg.get_value("llama_ngl")),
-                         dpg.get_value("llama_kv"), None, bool(dpg.get_value("llama_lan")))
+                         dpg.get_value("llama_kv"), vram_mb, bool(dpg.get_value("llama_lan")),
+                         ctv=ctv)
 
     def _toggle_token(self):
         cur = dpg.get_item_configuration("llama_token").get("password", True)
